@@ -1,3 +1,7 @@
 # Keep server-states dir, but do not track anything else within.
 server-states/*
 !server-states/.gitkeep
+
+
+# .DS_Store files of macOS.
+.DS_Store
