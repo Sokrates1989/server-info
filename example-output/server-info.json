@@ -1,0 +1,78 @@
+{
+  "timestamp": {
+    "unix_format": 1767808672,
+    "human_readable_format": "2026-01-07 17:57:52"
+  },
+  "system_info": {
+    "hostname": "ubuntu-mini",
+    "dist_name": "Ubuntu 24.04.3 LTS",
+    "kernel_ver": "Linux 6.8.0-90-generic",
+    "sys_info": "Ubuntu 24.04.3 LTS (Linux 6.8.0-90-generic)"
+  },
+  "cpu": {
+    "cpu_cores": "16",
+    "last_15min_cpu_percentage": "4.00"
+  },
+  "disk": {
+    "mount_point": "/",
+    "total_disk_avail": "915G",
+    "disk_usage_amount": "102G",
+    "disk_usage_percentage": "12%"
+  },
+  "memory": {
+    "total_memory": "28972",
+    "total_memory_human": "28Gi",
+    "used_memory": "5242",
+    "used_memory_human": "5.1Gi",
+    "memory_usage_percentage": "18.00"
+  },
+  "swap": {
+    "swap_status": "Off"
+  },
+  "processes": {
+    "amount_processes": "446"
+  },
+  "users": {
+    "logged_in_users": "1"
+  },
+  "network": {
+    "is_vnstab_installed": "true",
+    "has_vnstab_enough_data": "true",
+    "upstream_avg_bits": "82394.72",
+    "upstream_avg_human": "82.39 kbit/s",
+    "downstream_avg_bits": "3054198.96",
+    "downstream_avg_human": "3.05 Mbit/s",
+    "total_network_avg_bits": "3136593.68",
+    "total_network_avg_human": "3.13 Mbit/s"
+  },
+  "gluster": {
+    "is_gluster_installed": "false",
+    "is_peer_state_valid": "",
+    "gluster_peers": [],
+    "number_of_peers": "",
+    "number_of_healthy_peers": "",
+    "gluster_volumes": [],
+    "number_of_volumes": "",
+    "number_of_healthy_volumes": "",
+    "all_unhealthy_bricks": [],
+    "all_unhealthy_processes": [],
+    "all_errors_warnings": [],
+    "all_active_tasks": []
+  },
+  "updates": {
+    "amount_of_available_updates": "0",
+    "updates_available_output": "~0 updates available"
+  },
+  "system_restart": {
+    "status": "No restart required",
+    "time_elapsed_seconds": "0",
+    "time_elapsed_human_readable": "0h 0m 0s"
+  },
+  "linux_server_state_tool": {
+    "repo_url": "https://github.com/Sokrates1989/linux-server-status.git",
+    "repo_accessible": "true",
+    "local_changes": "None",
+    "up_to_date": "true",
+    "behind_count": "0"
+  }
+}
