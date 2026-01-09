@@ -233,10 +233,10 @@ logged_in_users=$(who | wc -l)
 
 # Available updates.
 sudo apt-get update -qq
-# Use a more reliable method to count upgradable packages
-upgradable_count=$(apt list --upgradable 2>/dev/null | grep -c '/upgradable' || echo "0")
+# Use wc -l instead of grep -c to avoid multi-line count issues
+upgradable_count=$(apt list --upgradable 2>/dev/null | grep '/upgradable' | wc -l)
 # Ensure we have a clean integer
-upgradable_count=$(echo "$upgradable_count" | tr -d '\n\r' | grep -o '[0-9]*' | head -1)
+upgradable_count=$(echo "$upgradable_count" | tr -d ' \n\r')
 if [ -n "$upgradable_count" ] && [ "$upgradable_count" -gt 0 ]; then
     amount_of_available_updates=$upgradable_count
     updates_available_output="~$amount_of_available_updates updates available"
