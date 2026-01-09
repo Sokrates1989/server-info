@@ -235,8 +235,10 @@ logged_in_users=$(who | wc -l)
 sudo apt-get update -qq
 updates=$(apt list --upgradable 2>/dev/null)
 amount_of_available_updates=""
-if [ "${#updates}" -gt 10 ]; then
-    amount_of_available_updates=$(apt list --upgradable 2>/dev/null | grep -c '/upgradable')
+# Check if there are actual upgradable packages (not just headers/warnings)
+upgradable_count=$(echo "$updates" | grep -c '/upgradable' || echo "0")
+if [ "$upgradable_count" -gt 0 ]; then
+    amount_of_available_updates=$upgradable_count
     updates_available_output="~$amount_of_available_updates updates available"
 else
     updates_available_output="no updates available"
