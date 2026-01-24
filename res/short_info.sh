@@ -196,7 +196,8 @@ else
             # Print user info how to update repo.
             echo -e "\nTo Update repo do this:"
             echo -e "cd $MAIN_DIR"
-            echo -e "git pull\n"
+            echo -e "git pull"
+            echo -e "cd $current_dir\n"
             
         fi
     fi         
