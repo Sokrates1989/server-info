@@ -335,7 +335,7 @@ restore_services() {
         echo ""
     fi
     
-    # First, restore global services
+    # Restore global services first (reverse of shutdown order)
     local global_services
     global_services=$(docker service ls --format '{{.Name}} {{.Mode}}' 2>/dev/null | awk '$2=="global"{print $1}')
     if [ -n "$global_services" ]; then
@@ -346,11 +346,48 @@ restore_services() {
         echo ""
     fi
     
-    # Execute the restore script
-    echo "📦 Restoring replicated services..."
-    bash "$SNAPSHOT_FILE"
+    # Restore replicated services in reverse order of shutdown: ingress -> databases -> apps
+    local ingress_commands=()
+    local db_commands=()
+    local app_commands=()
+    local current_category=""
     
-    echo ""
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^#\ Category:\ ([a-z]+)\ \| ]]; then
+            current_category="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^docker\ service\ scale\  ]]; then
+            case "$current_category" in
+                ingress) ingress_commands+=("$line") ;;
+                db) db_commands+=("$line") ;;
+                app) app_commands+=("$line") ;;
+            esac
+        fi
+    done < "$SNAPSHOT_FILE"
+    
+    if [ ${#ingress_commands[@]} -gt 0 ]; then
+        echo "🌐 Restoring ingress services..."
+        for cmd in "${ingress_commands[@]}"; do
+            eval "$cmd"
+        done
+        echo ""
+    fi
+    
+    if [ ${#db_commands[@]} -gt 0 ]; then
+        echo "�️  Restoring database services..."
+        for cmd in "${db_commands[@]}"; do
+            eval "$cmd"
+        done
+        echo ""
+    fi
+    
+    if [ ${#app_commands[@]} -gt 0 ]; then
+        echo "📦 Restoring application services..."
+        for cmd in "${app_commands[@]}"; do
+            eval "$cmd"
+        done
+        echo ""
+    fi
+    
     echo "✅ Services restored"
     echo ""
     
