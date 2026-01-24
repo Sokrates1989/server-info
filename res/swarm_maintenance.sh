@@ -13,8 +13,8 @@ while [ -L "$SOURCE" ]; do
   SOURCE="$(readlink "$SOURCE")"
   [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
 done
-SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
-MAIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+MAINTENANCE_SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+MAINTENANCE_MAIN_DIR="$(cd "$MAINTENANCE_SCRIPT_DIR/.." && pwd)"
 
 # Configuration
 MAINTENANCE_DIR="/var/lib/server-info/swarm-maintenance"
