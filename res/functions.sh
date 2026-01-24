@@ -148,6 +148,28 @@ find_swarm_info_script() {
 }
 
 
+# Get the number of nodes in the Docker Swarm.
+#
+# Returns:
+#     Number of nodes (echoed to stdout), or 0 if not in swarm
+get_swarm_node_count() {
+    if command -v docker &> /dev/null && docker info 2>/dev/null | grep -q "Swarm: active"; then
+        docker node ls --format '{{.ID}}' 2>/dev/null | wc -l | tr -d ' '
+    else
+        echo "0"
+    fi
+}
+
+# Check if this is a single-node Docker Swarm.
+#
+# Returns:
+#     0 if single-node swarm, 1 otherwise
+is_single_node_swarm() {
+    local node_count
+    node_count=$(get_swarm_node_count)
+    [ "$node_count" -eq 1 ]
+}
+
 # Main function to get restart information and provide instructions if necessary.
 get_restart_information() {
     # Function parameter: output option how to format user ouput.
@@ -157,6 +179,18 @@ get_restart_information() {
     # Variable declarations and initializations.
     local timestamp=$(date +%s)
     local restart_required_timestamp=""
+    local is_swarm_active=false
+    local is_single_node=false
+    local node_count=0
+
+    # Check swarm status once
+    if command -v docker &> /dev/null && docker info 2>/dev/null | grep -q "Swarm: active"; then
+        is_swarm_active=true
+        node_count=$(get_swarm_node_count)
+        if [ "$node_count" -eq 1 ]; then
+            is_single_node=true
+        fi
+    fi
 
     # Is a system restart required?
     if [ -f /var/run/reboot-required ]; then
@@ -173,55 +207,83 @@ get_restart_information() {
         fi
 
         # Check if the server is part of a Docker Swarm.
-        if command -v docker &> /dev/null && docker info | grep -q "Swarm: active"; then
-
-            # Reboot instructions to avoid downtime and prevent write errors.
+        if [ "$is_swarm_active" = true ]; then
             local node_name=$(hostname)
-            echo -e "\nRestart instructions/advice to decrease downtime of containers and prevent write errors:"
-            echo "DO NOT simply reboot. Instead, follow these steps:"
-            echo ""
-            echo "1. Drain the node (all services/containers will be redeployed onto different nodes):"
-            echo "   docker node update --availability drain $node_name"
-            echo ""
-            echo "2. Watch progress to ensure the host no longer runs any services:"
-            echo "   watch docker service ls"
-
-            # Find the location of the swarm-info/get_info.sh script
-            local swarm_info_script_location=$(find_swarm_info_script)
-            if [ -n "$swarm_info_script_location" ]; then
-                echo "   watch swarm-info --node-services"
+            
+            # Different instructions based on single-node vs multi-node swarm
+            if [ "$is_single_node" = true ]; then
+                # Single-node swarm: use safe-reboot workflow
+                echo -e "\n🔄 Single-node Swarm detected - Use safe reboot workflow:"
+                echo "DO NOT simply reboot. Instead, use the safe reboot command:"
+                echo ""
+                echo "   server-info --safe-reboot"
+                echo ""
+                echo "This will:"
+                echo "  1. Create a snapshot of all service replica counts"
+                echo "  2. Scale down services safely (apps → databases → ingress)"
+                echo "  3. Prompt you to reboot"
+                echo ""
+                echo "After reboot, restore services with:"
+                echo "   server-info --maintenance-exit"
+                echo ""
+                echo "For more details: server-info --maintenance-help"
             else
-                echo "   To easily view service distribution across nodes, please install swarm-info from https://github.com/Sokrates1989/swarm-info"
+                # Multi-node swarm: use drain approach
+                echo -e "\nRestart instructions/advice to decrease downtime of containers and prevent write errors:"
+                echo "DO NOT simply reboot. Instead, follow these steps:"
+                echo ""
+                echo "1. Drain the node (all services/containers will be redeployed onto different nodes):"
+                echo "   docker node update --availability drain $node_name"
+                echo ""
+                echo "2. Watch progress to ensure the host no longer runs any services:"
+                echo "   watch docker service ls"
+
+                # Find the location of the swarm-info/get_info.sh script
+                local swarm_info_script_location=$(find_swarm_info_script)
+                if [ -n "$swarm_info_script_location" ]; then
+                    echo "   watch swarm-info --node-services"
+                else
+                    echo "   To easily view service distribution across nodes, please install swarm-info from https://github.com/Sokrates1989/swarm-info"
+                fi
+
+                echo ""
+                echo "3. Reboot the server:"
+                echo "   reboot"
+                echo ""
+                echo "4. Make the node available again:"
+                echo "   docker node update --availability active $node_name"
+                echo ""
+                echo "5. Ensure equal distribution of services:"
+
+                if [ -n "$swarm_info_script_location" ]; then
+                    echo "   watch bash $swarm_info_script_location --node-services"
+                else
+                    echo "   To easily view service distribution across nodes, please install swarm-info from https://github.com/Sokrates1989/swarm-info"
+                fi
+
+                echo "   docker service update --force <service_name>"
             fi
-
-            echo ""
-            echo "3. Reboot the server:"
-            echo "   reboot"
-            echo ""
-            echo "4. Make the node available again:"
-            echo "   docker node update --availability active $node_name"
-            echo ""
-            echo "5. Ensure equal distribution of services:"
-
-            if [ -n "$swarm_info_script_location" ]; then
-                echo "   watch bash $swarm_info_script_location --node-services"
-            else
-                echo "   To easily view service distribution across nodes, please install swarm-info from https://github.com/Sokrates1989/swarm-info"
-            fi
-
-            echo "   docker service update --force <service_name>"
         fi
     else
-        # Print user info: System needs to be restarted.
+        # Print user info: System does not need to be restarted.
         if [ "$output_options" == "short" ]; then
             printf "%-${output_tab_space}s: %s\n" "Restart required" "No"
         else
             echo -e "No restart required"
         fi
+        
+        # Even if no restart required, show safe reboot option for single-node swarm
+        if [ "$is_single_node" = true ]; then
+            echo ""
+            echo "💡 If you want to reboot this single-node Swarm anyway:"
+            echo "   server-info --safe-reboot"
+            echo ""
+            echo "   This safely scales down services before reboot and restores them after."
+        fi
     fi
 
     # Check if Docker Swarm is active and node is drained (for post-reboot reactivation)
-    if command -v docker &> /dev/null && docker info | grep -q "Swarm: active"; then
+    if [ "$is_swarm_active" = true ]; then
         local node_name=$(hostname)
         local node_availability=$(docker node inspect "$node_name" --format '{{.Spec.Availability}}' 2>/dev/null)
         
@@ -245,5 +307,18 @@ get_restart_information() {
                 echo "To easily view service distribution across nodes, please install swarm-info from https://github.com/Sokrates1989/swarm-info"
             fi
         fi
+    fi
+    
+    # Check if maintenance mode is active (snapshot exists)
+    local maintenance_snapshot="/var/lib/server-info/swarm-maintenance/current_snapshot.sh"
+    if [ -f "$maintenance_snapshot" ]; then
+        echo -e "\n⚠️  Swarm Maintenance Mode: ACTIVE"
+        echo "A service snapshot exists - services may need to be restored."
+        echo ""
+        echo "To restore services from the snapshot:"
+        echo "   server-info --maintenance-exit"
+        echo ""
+        echo "To check maintenance status:"
+        echo "   server-info --maintenance-status"
     fi
 }

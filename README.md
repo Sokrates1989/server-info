@@ -124,3 +124,94 @@ crontab -e
 59 * * * * /usr/local/bin/server-info --json --output-file /serverInfo/system_info.json
 ```
 
+---
+
+# 🔄 Swarm Maintenance (Single-Node Safe Reboot)
+
+For **single-node Docker Swarm** clusters, simply rebooting can leave services in an inconsistent state. The `--safe-reboot` workflow safely scales down services before reboot and restores them after.
+
+## 🚀 Quick Safe Reboot
+
+```bash
+# Enter maintenance mode, scale down services, and reboot
+server-info --safe-reboot
+
+# After reboot, restore services
+server-info --maintenance-exit
+```
+
+## 📋 Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `--safe-reboot` | Full safe reboot workflow (snapshot + scale down + reboot prompt) |
+| `--maintenance-enter` | Enter maintenance mode only (snapshot + scale down) |
+| `--maintenance-exit` | Exit maintenance mode (restore services from snapshot) |
+| `--maintenance-status` | Show current maintenance status |
+| `--maintenance-help` | Show detailed maintenance help |
+
+## 🔧 How It Works
+
+1. **Snapshot**: Creates a snapshot of all service replica counts
+2. **Scale Down**: Stops services in safe order:
+   - Applications first (APIs, frontends, bots)
+   - Databases next (postgres, mysql, redis, neo4j)
+   - Ingress last (traefik, nginx)
+3. **Reboot**: System reboots safely with all services stopped
+4. **Restore**: After reboot, services are restored to their exact previous state
+
+## 📝 Example Workflow
+
+```bash
+# Check current status
+server-info --maintenance-status
+
+# Option A: Full automated workflow
+server-info --safe-reboot
+# (system reboots)
+server-info --maintenance-exit
+
+# Option B: Manual steps
+server-info --maintenance-enter
+reboot
+# (after reboot)
+server-info --maintenance-exit
+```
+
+## ⚙️ Options
+
+| Option | Description |
+|--------|-------------|
+| `--force` | Overwrite existing snapshot (for `--maintenance-enter` and `--safe-reboot`) |
+| `--dry-run` | Show what would be done without making changes (for `--maintenance-enter`) |
+| `--keep-snapshot` | Don't archive snapshot after restore (for `--maintenance-exit`) |
+| `-y, --yes` | Auto-confirm reboot without prompt (for `--safe-reboot`) |
+
+## 📁 Snapshot Location
+
+Snapshots are stored in `/var/lib/server-info/swarm-maintenance/` and archived after successful restore.
+
+---
+
+# 📚 All Available Options
+
+```bash
+server-info --help
+```
+
+| Option | Description |
+|--------|-------------|
+| `-s` | Display short system information (default) |
+| `-f, --full, -l` | Display full system information |
+| `-u` | Display available system updates |
+| `--cpu` | Display CPU information |
+| `-g, --gluster` | Display full GlusterFS info |
+| `--json` | Save and display info in JSON format |
+| `-o, --output-file` | Where to save the JSON output |
+| `--maintenance-enter` | Enter swarm maintenance mode |
+| `--maintenance-exit` | Exit swarm maintenance mode |
+| `--safe-reboot` | Full safe reboot workflow |
+| `--maintenance-status` | Show maintenance status |
+| `--maintenance-help` | Show maintenance help |
+| `--help` | Display help message |
+
