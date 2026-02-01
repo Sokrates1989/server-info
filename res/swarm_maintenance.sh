@@ -24,6 +24,8 @@ SNAPSHOT_INFO="$MAINTENANCE_DIR/current_snapshot.info"
 # Service classification patterns (lowercase for matching)
 DB_PATTERNS="postgres|mysql|mariadb|mongo|redis|neo4j|elasticsearch|memcached"
 INGRESS_PATTERNS="traefik|nginx|haproxy|caddy"
+# One-shot services that run once and exit (should not be restored)
+ONESHOT_PATTERNS="migration|migrate|init|setup|seed|job"
 
 # =============================================================================
 # Helper Functions
@@ -77,14 +79,17 @@ is_single_node_swarm() {
 #     image: Image name of the service
 #
 # Returns:
-#     Category string: "app", "db", or "ingress"
+#     Category string: "app", "db", "ingress", or "oneshot"
 classify_service() {
     local service_name="$1"
     local image="$2"
     local combined
     combined=$(echo "${service_name}_${image}" | tr '[:upper:]' '[:lower:]')
     
-    if echo "$combined" | grep -qE "$INGRESS_PATTERNS"; then
+    # Check for one-shot services first (migrations, init jobs, etc.)
+    if echo "$combined" | grep -qE "$ONESHOT_PATTERNS"; then
+        echo "oneshot"
+    elif echo "$combined" | grep -qE "$INGRESS_PATTERNS"; then
         echo "ingress"
     elif echo "$combined" | grep -qE "$DB_PATTERNS"; then
         echo "db"
@@ -99,6 +104,58 @@ ensure_maintenance_dir() {
         sudo mkdir -p "$MAINTENANCE_DIR"
         sudo chmod 755 "$MAINTENANCE_DIR"
     fi
+}
+
+# Wait for a list of services to converge (reach desired replica count).
+#
+# Args:
+#     timeout_seconds: Maximum time to wait (default: 120)
+#     service_names...: List of service names to wait for
+#
+# Returns:
+#     0 if all services converged, 1 if timeout
+wait_for_services_converged() {
+    local timeout=${1:-120}
+    shift
+    local services=("$@")
+    
+    [ ${#services[@]} -eq 0 ] && return 0
+    
+    local start_time
+    start_time=$(date +%s)
+    local elapsed=0
+    
+    while [ $elapsed -lt $timeout ]; do
+        local all_converged=true
+        
+        for svc in "${services[@]}"; do
+            local replicas
+            replicas=$(docker service ls --filter "name=$svc" --format '{{.Replicas}}' 2>/dev/null | head -1)
+            
+            if [ -z "$replicas" ]; then
+                continue
+            fi
+            
+            local current desired
+            current=$(echo "$replicas" | cut -d'/' -f1)
+            desired=$(echo "$replicas" | cut -d'/' -f2)
+            
+            if [ "$current" != "$desired" ]; then
+                all_converged=false
+                break
+            fi
+        done
+        
+        if [ "$all_converged" = "true" ]; then
+            return 0
+        fi
+        
+        sleep 2
+        elapsed=$(( $(date +%s) - start_time ))
+    done
+    
+    echo "⚠️  Timeout waiting for services to converge (continuing anyway)"
+    return 1
 }
 
 # =============================================================================
@@ -161,6 +218,7 @@ EOF
     local app_count=0
     local db_count=0
     local ingress_count=0
+    local oneshot_count=0
     local total_count=0
     
     # Get all services and their replica counts
@@ -185,6 +243,7 @@ EOF
                 app) ((app_count++)) ;;
                 db) ((db_count++)) ;;
                 ingress) ((ingress_count++)) ;;
+                oneshot) ((oneshot_count++)) ;;
             esac
             ((total_count++))
         elif [ "$mode" = "global" ]; then
@@ -210,13 +269,17 @@ Total Services: $total_count
 Application Services: $app_count
 Database Services: $db_count
 Ingress Services: $ingress_count
+One-shot Services: $oneshot_count
 Node Count: $(get_swarm_node_count)
 EOF
     
     echo ""
     echo "✅ Snapshot created successfully"
     echo "   Location: $SNAPSHOT_FILE"
-    echo "   Services captured: $total_count (Apps: $app_count, DBs: $db_count, Ingress: $ingress_count)"
+    echo "   Services captured: $total_count (Apps: $app_count, DBs: $db_count, Ingress: $ingress_count, One-shot: $oneshot_count)"
+    if [ "$oneshot_count" -gt 0 ]; then
+        echo "   ⚠️  One-shot services (migrations, init jobs) will be skipped during restore"
+    fi
     echo ""
     
     return 0
@@ -340,16 +403,23 @@ restore_services() {
     global_services=$(docker service ls --format '{{.Name}} {{.Mode}}' 2>/dev/null | awk '$2=="global"{print $1}')
     if [ -n "$global_services" ]; then
         echo "🌍 Restoring global services..."
+        local global_names=()
         for svc in $global_services; do
-            docker service update --replicas-max-per-node 1000000 "$svc" 2>/dev/null || true
+            global_names+=("$svc")
+            docker service update --replicas-max-per-node 1000000 "$svc" --detach 2>/dev/null || \
+                docker service update --replicas-max-per-node 1000000 "$svc" 2>/dev/null || true
         done
+        echo "   Waiting for global services to converge..."
+        wait_for_services_converged 120 "${global_names[@]}"
         echo ""
     fi
     
     # Restore replicated services in reverse order of shutdown: ingress -> databases -> apps
+    # Note: oneshot services (migrations, init jobs) are intentionally skipped
     local ingress_commands=()
     local db_commands=()
     local app_commands=()
+    local oneshot_skipped=()
     local current_category=""
     
     while IFS= read -r line; do
@@ -360,31 +430,68 @@ restore_services() {
                 ingress) ingress_commands+=("$line") ;;
                 db) db_commands+=("$line") ;;
                 app) app_commands+=("$line") ;;
+                oneshot)
+                    # Extract service name for logging
+                    local svc_name
+                    svc_name=$(echo "$line" | sed 's/docker service scale "\([^=]*\)=.*/\1/')
+                    oneshot_skipped+=("$svc_name")
+                    ;;
             esac
         fi
     done < "$SNAPSHOT_FILE"
     
-    if [ ${#ingress_commands[@]} -gt 0 ]; then
-        echo "🌐 Restoring ingress services..."
-        for cmd in "${ingress_commands[@]}"; do
-            eval "$cmd"
+    # Log skipped one-shot services
+    if [ ${#oneshot_skipped[@]} -gt 0 ]; then
+        echo "⏭️  Skipping one-shot services (migrations, init jobs):"
+        for svc in "${oneshot_skipped[@]}"; do
+            echo "   - $svc"
         done
         echo ""
     fi
     
-    if [ ${#db_commands[@]} -gt 0 ]; then
-        echo "�️  Restoring database services..."
-        for cmd in "${db_commands[@]}"; do
-            eval "$cmd"
+    # Restore in order with convergence waits between categories
+    # This ensures dependencies are ready before dependent services start
+    
+    if [ ${#ingress_commands[@]} -gt 0 ]; then
+        echo "🌐 Restoring ingress services..."
+        local ingress_names=()
+        for cmd in "${ingress_commands[@]}"; do
+            # Extract service name and scale with --detach
+            local svc_name
+            svc_name=$(echo "$cmd" | sed 's/docker service scale "\([^=]*\)=.*/\1/')
+            ingress_names+=("$svc_name")
+            eval "${cmd} --detach" 2>/dev/null || eval "$cmd"
         done
+        echo "   Waiting for ingress services to converge..."
+        wait_for_services_converged 120 "${ingress_names[@]}"
+        echo ""
+    fi
+    
+    if [ ${#db_commands[@]} -gt 0 ]; then
+        echo "🗄️  Restoring database services..."
+        local db_names=()
+        for cmd in "${db_commands[@]}"; do
+            local svc_name
+            svc_name=$(echo "$cmd" | sed 's/docker service scale "\([^=]*\)=.*/\1/')
+            db_names+=("$svc_name")
+            eval "${cmd} --detach" 2>/dev/null || eval "$cmd"
+        done
+        echo "   Waiting for database services to converge..."
+        wait_for_services_converged 180 "${db_names[@]}"
         echo ""
     fi
     
     if [ ${#app_commands[@]} -gt 0 ]; then
         echo "📦 Restoring application services..."
+        local app_names=()
         for cmd in "${app_commands[@]}"; do
-            eval "$cmd"
+            local svc_name
+            svc_name=$(echo "$cmd" | sed 's/docker service scale "\([^=]*\)=.*/\1/')
+            app_names+=("$svc_name")
+            eval "${cmd} --detach" 2>/dev/null || eval "$cmd"
         done
+        echo "   Waiting for application services to converge..."
+        wait_for_services_converged 180 "${app_names[@]}"
         echo ""
     fi
     
