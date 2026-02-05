@@ -16,6 +16,9 @@ done
 MAINTENANCE_SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
 MAINTENANCE_MAIN_DIR="$(cd "$MAINTENANCE_SCRIPT_DIR/.." && pwd)"
 
+# Global functions (provides kernel helpers: is_kernel_update_available, etc.).
+source "$MAINTENANCE_SCRIPT_DIR/functions.sh"
+
 # Configuration
 MAINTENANCE_DIR="/var/lib/server-info/swarm-maintenance"
 SNAPSHOT_FILE="$MAINTENANCE_DIR/current_snapshot.sh"
@@ -323,14 +326,18 @@ scale_down_services() {
         esac
     done < <(docker service ls --format '{{.Name}} {{.Mode}} {{.Image}}' 2>/dev/null)
     
-    # Scale down applications first
+    # Scale down applications first (--detach for parallel shutdown)
     if [ ${#app_services[@]} -gt 0 ]; then
         echo "📦 Scaling down application services (${#app_services[@]})..."
         local scale_args=""
         for svc in "${app_services[@]}"; do
             scale_args="$scale_args $svc=0"
         done
-        docker service scale $scale_args 2>/dev/null
+        docker service scale --detach $scale_args 2>/dev/null
+        echo "   Waiting for application services to stop..."
+        if ! wait_for_services_converged 120 "${app_services[@]}"; then
+            echo "   ⚠️  Timeout waiting for some application services, but continuing..."
+        fi
         echo ""
     fi
     
@@ -341,7 +348,11 @@ scale_down_services() {
         for svc in "${db_services[@]}"; do
             scale_args="$scale_args $svc=0"
         done
-        docker service scale $scale_args 2>/dev/null
+        docker service scale --detach $scale_args 2>/dev/null
+        echo "   Waiting for database services to stop..."
+        if ! wait_for_services_converged 120 "${db_services[@]}"; then
+            echo "   ⚠️  Timeout waiting for some database services, but continuing..."
+        fi
         echo ""
     fi
     
@@ -352,7 +363,11 @@ scale_down_services() {
         for svc in "${ingress_services[@]}"; do
             scale_args="$scale_args $svc=0"
         done
-        docker service scale $scale_args 2>/dev/null
+        docker service scale --detach $scale_args 2>/dev/null
+        echo "   Waiting for ingress services to stop..."
+        if ! wait_for_services_converged 120 "${ingress_services[@]}"; then
+            echo "   ⚠️  Timeout waiting for some ingress services, but continuing..."
+        fi
         echo ""
     fi
     
@@ -363,7 +378,7 @@ scale_down_services() {
         echo "🌍 Scaling down global services..."
         for svc in $global_services; do
             # Global services can't be scaled to 0, so we update with replicas constraint
-            docker service update --replicas-max-per-node 0 "$svc" 2>/dev/null || true
+            docker service update --detach --replicas-max-per-node 0 "$svc" 2>/dev/null || true
         done
         echo ""
     fi
