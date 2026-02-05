@@ -205,6 +205,7 @@ server-info --help
 | `-f, --full, -l` | Display full system information |
 | `-u` | Display available system updates |
 | `--cpu` | Display CPU information |
+| `--kernel` | Display kernel version and update information |
 | `-g, --gluster` | Display full GlusterFS info |
 | `--json` | Save and display info in JSON format |
 | `-o, --output-file` | Where to save the JSON output |

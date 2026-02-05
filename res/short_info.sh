@@ -52,6 +52,10 @@ sys_info="$(lsb_release -ds) ($(uname -sr))"
 printf "%-${output_tab_space}s: %s\n" "Hostname" "$hostname (sudo hostnamectl set-hostname newhostname)" 
 printf "%-${output_tab_space}s: %s\n" "System name" "$sys_info"
 
+# Kernel information
+echo -e ""
+check_kernel_info $output_tab_space
+
 # Spacer.
 echo -e ""
 

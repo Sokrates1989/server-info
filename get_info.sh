@@ -9,6 +9,13 @@ while [ -L "$SOURCE" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
 
+# Function to display kernel information.
+display_kernel_info() {
+    echo -e ""
+    bash "$SCRIPT_DIR/res/kernel_info.sh" -t 28
+    echo -e ""
+}
+
 # Function to display short system information.
 display_short_info() {
     bash "$SCRIPT_DIR/res/short_info.sh"
@@ -65,6 +72,7 @@ display_help() {
     echo -e "  -u                      Display available system updates"
     echo -e "  -s                      Display short system information"
     echo -e "  --cpu                   Display CPU information"
+    echo -e "  --kernel                Display kernel version and update information"
     echo -e "  -g, --gluster           Display full glusterfs info"
     echo -e "  --help                  Display this help message"
     echo -e "  --json                  Save and display info in json format"
@@ -105,6 +113,10 @@ while [ $# -gt 0 ]; do
             ;;
         --cpu)
             display_cpu_info
+            exit 0
+            ;;
+        --kernel)
+            display_kernel_info
             exit 0
             ;;
         --gluster)
