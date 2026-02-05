@@ -782,9 +782,18 @@ safe_reboot() {
                 kernel_upgraded=true
             else
                 echo ""
-                echo "⚠️  Kernel update encountered errors."
-                echo "    The reboot will proceed, but the kernel may not be updated."
-                echo "    After reboot, check with: uname -r"
+                echo "⚠️  Full upgrade had issues, trying explicit kernel package installation..."
+                # Try to install the specific kernel packages that were kept back
+                if sudo apt-get -y install linux-generic linux-headers-generic linux-image-generic; then
+                    echo ""
+                    echo "✅ Kernel packages installed successfully."
+                    kernel_upgraded=true
+                else
+                    echo ""
+                    echo "⚠️  Kernel update encountered errors."
+                    echo "    The reboot will proceed, but the kernel may not be updated."
+                    echo "    After reboot, check with: uname -r"
+                fi
             fi
         else
             echo ""

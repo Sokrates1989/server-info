@@ -199,10 +199,13 @@ check_kernel_info() {
     # Display current kernel info
     printf "%-${output_tab_space}s: %s\n" "Current Kernel" "$current_kernel_full"
 
-    # Determine if an update is available
+    # Determine if an update is available AND installable
     local has_update=false
     if [ -n "$installed_version" ] && [ -n "$candidate_version" ] && [ "$installed_version" != "$candidate_version" ]; then
-        has_update=true
+        # Verify the candidate version is actually installable
+        if apt-get install --dry-run linux-generic 2>/dev/null | grep -q "Inst linux-generic"; then
+            has_update=true
+        fi
     fi
 
     if [ "$has_update" = true ]; then
@@ -233,7 +236,10 @@ is_kernel_update_available() {
     local installed=$(echo "$policy_output" | grep "Installed:" | awk '{print $2}')
     local candidate=$(echo "$policy_output" | grep "Candidate:" | awk '{print $2}')
     if [ -n "$installed" ] && [ -n "$candidate" ] && [ "$installed" != "$candidate" ]; then
-        return 0
+        # Verify the candidate version is actually installable
+        if apt-get install --dry-run linux-generic 2>/dev/null | grep -q "Inst linux-generic"; then
+            return 0
+        fi
     fi
     return 1
 }
