@@ -172,11 +172,10 @@ kernel_ver=$(uname -sr)
 sys_info_from_vars="${dist_name} (${kernel_ver})"
 sys_info="$(lsb_release -ds) ($(uname -sr))"
 
-# Kernel version info via apt-cache policy (package counting deferred until after apt-get update).
+# Kernel version info via apt-cache policy.
 kernel_policy_output=$(apt-cache policy linux-image-generic 2>/dev/null)
 kernel_installed_version=""
 kernel_candidate_version=""
-kernel_outdated_packages=0
 if [ -n "$kernel_policy_output" ]; then
     kernel_installed_version=$(echo "$kernel_policy_output" | grep "Installed:" | awk '{print $2}')
     kernel_candidate_version=$(echo "$kernel_policy_output" | grep "Candidate:" | awk '{print $2}')
@@ -247,13 +246,6 @@ logged_in_users=$(who | wc -l)
 
 # Available updates.
 sudo apt-get update -qq
-
-# Count kernel-specific outdated packages (after apt-get update for fresh data).
-kernel_outdated_packages=$(apt list --upgradable 2>/dev/null | grep -E "linux-(image|headers|generic|modules)" | wc -l)
-kernel_outdated_packages=$(echo "$kernel_outdated_packages" | tr -d ' \n\r')
-if [ -z "$kernel_outdated_packages" ]; then
-    kernel_outdated_packages=0
-fi
 
 # Use 'upgradable from' pattern which matches the actual apt output format
 upgradable_count=$(apt list --upgradable 2>/dev/null | grep 'upgradable from' | wc -l)
@@ -343,8 +335,7 @@ json_data=$(cat <<EOF
     "running_kernel": "$(uname -r)",
     "installed_version": "$kernel_installed_version",
     "candidate_version": "$kernel_candidate_version",
-    "update_available": "$kernel_update_available",
-    "outdated_packages": "$kernel_outdated_packages"
+    "update_available": "$kernel_update_available"
   },
   "cpu": {
     "cpu_cores": "$cpu_cores",

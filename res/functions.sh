@@ -173,7 +173,9 @@ is_single_node_swarm() {
 # Function to check kernel version and available updates.
 #
 # Uses apt-cache policy to compare Installed vs Candidate versions of
-# linux-image-generic. Also counts upgradable kernel-related packages.
+# linux-image-generic. Displays current vs available version and
+# points the user to the safe reboot workflow for Docker Swarm
+# or full-upgrade for non-swarm systems.
 #
 # Args:
 #     $1 (int, optional): Tab space for printf alignment. Default: 28.
@@ -194,11 +196,6 @@ check_kernel_info() {
         candidate_version=$(echo "$policy_output" | grep "Candidate:" | awk '{print $2}')
     fi
 
-    # Count upgradable kernel-related packages
-    local kernel_updates=$(apt list --upgradable 2>/dev/null | grep -E "linux-(image|headers|generic|modules)" | wc -l)
-    # Trim whitespace
-    kernel_updates=$(echo "$kernel_updates" | tr -d ' \n\r')
-
     # Display current kernel info
     printf "%-${output_tab_space}s: %s\n" "Current Kernel" "$current_kernel_full"
 
@@ -209,29 +206,52 @@ check_kernel_info() {
     fi
 
     if [ "$has_update" = true ]; then
-        printf "%-${output_tab_space}s: %s\n" "Installed Package" "$installed_version"
-        printf "%-${output_tab_space}s: %s\n" "Available Package" "$candidate_version"
+        printf "%-${output_tab_space}s: %s\n" "Kernel Update" "⚠️  $installed_version → $candidate_version"
 
-        if [ "$kernel_updates" -gt 0 ]; then
-            printf "%-${output_tab_space}s: %s\n" "Kernel Updates" "⚠️  Yes ($kernel_updates packages)"
-            printf "%-${output_tab_space}s: %s\n" "Update Command" "sudo apt upgrade linux-image-generic linux-headers-generic linux-generic"
-        fi
-
-        # Compare major.minor to distinguish severity
-        local inst_major=$(echo "$installed_version" | cut -d. -f1)
-        local inst_minor=$(echo "$installed_version" | cut -d. -f2)
-        local cand_major=$(echo "$candidate_version" | cut -d. -f1)
-        local cand_minor=$(echo "$candidate_version" | cut -d. -f2)
-
-        if [ "$inst_major" -lt "$cand_major" ] 2>/dev/null || \
-           ([ "$inst_major" -eq "$cand_major" ] 2>/dev/null && [ "$inst_minor" -lt "$cand_minor" ] 2>/dev/null); then
-            printf "%-${output_tab_space}s: %s\n" "Kernel Status" "⚠️  Major kernel update available"
+        # Detect if Docker Swarm is active to show appropriate guidance
+        if docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null | grep -q "active"; then
+            printf "%-${output_tab_space}s: %s\n" "Upgrade via" "server-info --safe-reboot"
         else
-            printf "%-${output_tab_space}s: %s\n" "Kernel Status" "⚠️  Security/patch update available"
+            printf "%-${output_tab_space}s: %s\n" "Upgrade via" "sudo apt update && sudo apt full-upgrade && sudo reboot"
         fi
     else
         printf "%-${output_tab_space}s: %s\n" "Kernel Status" "✅ Up to date"
     fi
+}
+
+# Check if a kernel update is available.
+#
+# Compares Installed vs Candidate version of linux-image-generic.
+#
+# Returns:
+#     0 if update available, 1 if up to date or unable to determine.
+is_kernel_update_available() {
+    local policy_output=$(apt-cache policy linux-image-generic 2>/dev/null)
+    if [ -z "$policy_output" ]; then
+        return 1
+    fi
+    local installed=$(echo "$policy_output" | grep "Installed:" | awk '{print $2}')
+    local candidate=$(echo "$policy_output" | grep "Candidate:" | awk '{print $2}')
+    if [ -n "$installed" ] && [ -n "$candidate" ] && [ "$installed" != "$candidate" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Get the installed kernel package version string.
+#
+# Returns:
+#     Prints the version string to stdout (e.g. "6.8.0-94.96").
+get_kernel_installed_version() {
+    apt-cache policy linux-image-generic 2>/dev/null | grep "Installed:" | awk '{print $2}'
+}
+
+# Get the candidate (available) kernel package version string.
+#
+# Returns:
+#     Prints the version string to stdout (e.g. "6.8.0-100.100").
+get_kernel_candidate_version() {
+    apt-cache policy linux-image-generic 2>/dev/null | grep "Candidate:" | awk '{print $2}'
 }
 
 # Main function to get restart information and provide instructions if necessary.
@@ -285,7 +305,12 @@ get_restart_information() {
                 echo "This will:"
                 echo "  1. Create a snapshot of all service replica counts"
                 echo "  2. Scale down services safely (apps → databases → ingress)"
+                if is_kernel_update_available; then
+                echo "  3. Offer to install kernel update (recommended)"
+                echo "  4. Prompt you to reboot"
+                else
                 echo "  3. Prompt you to reboot"
+                fi
                 echo ""
                 echo "After reboot, restore services with:"
                 echo "   server-info --maintenance-exit"

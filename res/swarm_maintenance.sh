@@ -713,12 +713,61 @@ safe_reboot() {
         echo "⚠️  Some services may still be running. Check with: docker service ls"
     fi
     
+    # Check for kernel update and offer to install before reboot
+    local kernel_upgraded=false
+    if is_kernel_update_available; then
+        local inst_ver=$(get_kernel_installed_version)
+        local cand_ver=$(get_kernel_candidate_version)
+        echo ""
+        echo "╔════════════════════════════════════════════════════════════════╗"
+        echo "║           KERNEL UPDATE AVAILABLE                              ║"
+        echo "╚════════════════════════════════════════════════════════════════╝"
+        echo ""
+        echo "  Current : $inst_ver"
+        echo "  Available: $cand_ver"
+        echo ""
+        echo "Since you are rebooting anyway, it is recommended to install"
+        echo "the kernel update now."
+        echo ""
+        read -p "Install kernel update before reboot? (recommended) [Y/n]: " kernel_confirm
+        if [[ ! "$kernel_confirm" =~ ^[Nn]$ ]]; then
+            echo ""
+            echo "🔄 Updating package lists..."
+            sudo apt-get update -qq
+            echo "🔄 Applying regular package updates (upgrade)..."
+            if sudo apt-get -y upgrade; then
+                echo "✅ Regular package updates completed."
+            else
+                echo ""
+                echo "⚠️  Regular package updates failed, but continuing with kernel update attempt..."
+            fi
+            echo "🔄 Installing kernel update (full-upgrade)..."
+            if sudo apt-get -y full-upgrade; then
+                echo ""
+                echo "✅ Kernel update installed successfully."
+                kernel_upgraded=true
+            else
+                echo ""
+                echo "⚠️  Kernel update encountered errors."
+                echo "    The reboot will proceed, but the kernel may not be updated."
+                echo "    After reboot, check with: uname -r"
+            fi
+        else
+            echo ""
+            echo "Skipping kernel update."
+        fi
+    fi
+    
     echo ""
     echo "╔════════════════════════════════════════════════════════════════╗"
     echo "║           READY TO REBOOT                                      ║"
     echo "╚════════════════════════════════════════════════════════════════╝"
     echo ""
-    echo "The server is ready for a safe reboot."
+    if [ "$kernel_upgraded" = "true" ]; then
+        echo "The kernel has been updated. A reboot is required to apply it."
+    else
+        echo "The server is ready for a safe reboot."
+    fi
     echo ""
     echo "After reboot, run this command to restore services:"
     echo "  server-info --maintenance-exit"
