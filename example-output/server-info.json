@@ -9,6 +9,13 @@
     "kernel_ver": "Linux 6.8.0-90-generic",
     "sys_info": "Ubuntu 24.04.3 LTS (Linux 6.8.0-90-generic)"
   },
+  "kernel": {
+    "running_kernel": "6.8.0-90-generic",
+    "installed_version": "6.8.0-90.90",
+    "candidate_version": "6.8.0-90.90",
+    "update_available": "false",
+    "outdated_packages": "0"
+  },
   "cpu": {
     "cpu_cores": "16",
     "last_15min_cpu_percentage": "4.00"

@@ -40,6 +40,9 @@ hostname=$(hostname)
 echo -e "Hostname: $hostname" 
 uname -a
 
+echo -e "\n\nKernel Information:"
+check_kernel_info 28
+
 echo -e "\n\nCpu Usage:"
 display_cpu_info
 

@@ -170,63 +170,67 @@ is_single_node_swarm() {
     [ "$node_count" -eq 1 ]
 }
 
-# Function to check kernel version and available updates
+# Function to check kernel version and available updates.
+#
+# Uses apt-cache policy to compare Installed vs Candidate versions of
+# linux-image-generic. Also counts upgradable kernel-related packages.
+#
+# Args:
+#     $1 (int, optional): Tab space for printf alignment. Default: 28.
 check_kernel_info() {
     local output_tab_space=${1:-28}
-    
-    # Get current kernel version
+
+    # Get running kernel version
     local current_kernel=$(uname -r)
     local current_kernel_full=$(uname -sr)
-    
-    # Get available kernel packages
-    local available_kernels=$(apt-cache policy linux-image-generic 2>/dev/null | grep -A 3 "linux-image-generic:")
-    local latest_generic=""
-    
-    if [ -n "$available_kernels" ]; then
-        latest_generic=$(echo "$available_kernels" | grep -E "^\s*\*\*\*" -A 1 | tail -1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+-[0-9]+" | head -1)
+
+    # Extract Installed and Candidate versions from apt-cache policy
+    local policy_output=$(apt-cache policy linux-image-generic 2>/dev/null)
+    local installed_version=""
+    local candidate_version=""
+
+    if [ -n "$policy_output" ]; then
+        installed_version=$(echo "$policy_output" | grep "Installed:" | awk '{print $2}')
+        candidate_version=$(echo "$policy_output" | grep "Candidate:" | awk '{print $2}')
     fi
-    
-    # Check for kernel-specific updates
-    local kernel_updates=$(apt list --upgradable 2>/dev/null | grep -E "linux-(image|headers|generic)" | wc -l)
-    
+
+    # Count upgradable kernel-related packages
+    local kernel_updates=$(apt list --upgradable 2>/dev/null | grep -E "linux-(image|headers|generic|modules)" | wc -l)
+    # Trim whitespace
+    kernel_updates=$(echo "$kernel_updates" | tr -d ' \n\r')
+
     # Display current kernel info
     printf "%-${output_tab_space}s: %s\n" "Current Kernel" "$current_kernel_full"
-    
-    if [ -n "$latest_generic" ] && [ "$latest_generic" != "$(echo $current_kernel | grep -oE "[0-9]+\.[0-9]+\.[0-9]+-[0-9]+")" ]; then
-        printf "%-${output_tab_space}s: %s\n" "Latest Available" "$latest_generic"
-        
-        # Check if current kernel is significantly outdated
-        local current_version=$(echo $current_kernel | grep -oE "[0-9]+\.[0-9]+\.[0-9]+-[0-9]+" | head -1)
-        local latest_version=$(echo $latest_generic | grep -oE "[0-9]+\.[0-9]+\.[0-9]+-[0-9]+" | head -1)
-        
+
+    # Determine if an update is available
+    local has_update=false
+    if [ -n "$installed_version" ] && [ -n "$candidate_version" ] && [ "$installed_version" != "$candidate_version" ]; then
+        has_update=true
+    fi
+
+    if [ "$has_update" = true ]; then
+        printf "%-${output_tab_space}s: %s\n" "Installed Package" "$installed_version"
+        printf "%-${output_tab_space}s: %s\n" "Available Package" "$candidate_version"
+
         if [ "$kernel_updates" -gt 0 ]; then
-            printf "%-${output_tab_space}s: %s\n" "Kernel Updates" "Yes ($kernel_updates packages available)"
+            printf "%-${output_tab_space}s: %s\n" "Kernel Updates" "⚠️  Yes ($kernel_updates packages)"
             printf "%-${output_tab_space}s: %s\n" "Update Command" "sudo apt upgrade linux-image-generic linux-headers-generic linux-generic"
-        else
-            printf "%-${output_tab_space}s: %s\n" "Kernel Updates" "No kernel-specific updates"
         fi
-        
-        # Version comparison logic
-        if [ -n "$current_version" ] && [ -n "$latest_version" ]; then
-            local current_major=$(echo $current_version | cut -d. -f1)
-            local current_minor=$(echo $current_version | cut -d. -f2)
-            local latest_major=$(echo $latest_version | cut -d. -f1)
-            local latest_minor=$(echo $latest_version | cut -d. -f2)
-            
-            if [ "$current_major" -lt "$latest_major" ] || ([ "$current_major" -eq "$latest_major" ] && [ "$current_minor" -lt "$latest_minor" ]); then
-                printf "%-${output_tab_space}s: %s\n" "Status" "⚠️  Major kernel update available"
-            else
-                printf "%-${output_tab_space}s: %s\n" "Status" "✅ Minor/security update available"
-            fi
+
+        # Compare major.minor to distinguish severity
+        local inst_major=$(echo "$installed_version" | cut -d. -f1)
+        local inst_minor=$(echo "$installed_version" | cut -d. -f2)
+        local cand_major=$(echo "$candidate_version" | cut -d. -f1)
+        local cand_minor=$(echo "$candidate_version" | cut -d. -f2)
+
+        if [ "$inst_major" -lt "$cand_major" ] 2>/dev/null || \
+           ([ "$inst_major" -eq "$cand_major" ] 2>/dev/null && [ "$inst_minor" -lt "$cand_minor" ] 2>/dev/null); then
+            printf "%-${output_tab_space}s: %s\n" "Kernel Status" "⚠️  Major kernel update available"
+        else
+            printf "%-${output_tab_space}s: %s\n" "Kernel Status" "⚠️  Security/patch update available"
         fi
     else
         printf "%-${output_tab_space}s: %s\n" "Kernel Status" "✅ Up to date"
-    fi
-    
-    # Show kernel security info if available
-    local security_info=$(apt-cache show linux-image-generic 2>/dev/null | grep -i "security\|cve" | wc -l)
-    if [ "$security_info" -gt 0 ]; then
-        printf "%-${output_tab_space}s: %s\n" "Security Notes" "Check changelog for security fixes"
     fi
 }
 
