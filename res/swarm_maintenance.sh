@@ -127,9 +127,11 @@ wait_for_services_converged() {
     local start_time
     start_time=$(date +%s)
     local elapsed=0
+    local last_progress_time=0
     
     while [ $elapsed -lt $timeout ]; do
         local all_converged=true
+        local failed_services=()
         
         for svc in "${services[@]}"; do
             local replicas
@@ -145,19 +147,36 @@ wait_for_services_converged() {
             
             if [ "$current" != "$desired" ]; then
                 all_converged=false
-                break
+                failed_services+=("$svc ($current/$desired)")
             fi
         done
         
         if [ "$all_converged" = "true" ]; then
+            # Clear the progress line if we were showing it
+            if [ $last_progress_time -gt 0 ]; then
+                echo -e "\r\033[K"  # Clear line and move to start
+            fi
             return 0
+        fi
+        
+        # Show progress every 2 seconds
+        if [ $((elapsed - last_progress_time)) -ge 2 ]; then
+            echo -ne "\r   Waiting for services to converge... (${elapsed}s / ${timeout}s)"
+            last_progress_time=$elapsed
         fi
         
         sleep 2
         elapsed=$(( $(date +%s) - start_time ))
     done
     
-    echo "⚠️  Timeout waiting for services to converge (continuing anyway)"
+    # Clear the progress line and show failed services
+    echo -e "\r\033[K"
+    if [ ${#failed_services[@]} -gt 0 ]; then
+        echo "   ⚠️  Timeout waiting for services to converge (continuing anyway)"
+        echo "      Failed services: ${failed_services[*]}"
+    else
+        echo "   ⚠️  Timeout waiting for services to converge (continuing anyway)"
+    fi
     return 1
 }
 
