@@ -260,6 +260,80 @@ get_kernel_candidate_version() {
     apt-cache policy linux-image-generic 2>/dev/null | grep "Candidate:" | awk '{print $2}'
 }
 
+# Calculate a weighted score for how far behind the installed kernel is.
+#
+# Uses a weighted formula based on semantic version components:
+#   Major version diff × 100 (e.g., 6.x → 7.x = 100)
+#   Minor version diff × 10  (e.g., 6.8 → 6.9 = 10)
+#   ABI diff (only when major.minor match, e.g., 6.8.0-94 → 6.8.0-100 = 6)
+#
+# Version format: MAJOR.MINOR.PATCH-ABI.UPLOAD (e.g., "6.8.0-94.96")
+#
+# Examples:
+#   6.8.0-94.96 → 6.8.0-100.100 = 6   (ABI diff only)
+#   6.8.0-94.96 → 6.9.0-10.10   = 10  (minor version jump)
+#   6.8.0-94.96 → 7.0.0-5.5     = 100 (major version jump)
+#
+# Returns:
+#     Prints the weighted score to stdout (e.g. "6"). Returns 0 if up to date.
+get_kernel_versions_behind() {
+    local policy_output=$(apt-cache policy linux-image-generic 2>/dev/null)
+    if [ -z "$policy_output" ]; then
+        echo "0"
+        return
+    fi
+    local installed=$(echo "$policy_output" | grep "Installed:" | awk '{print $2}')
+    local candidate=$(echo "$policy_output" | grep "Candidate:" | awk '{print $2}')
+    if [ -z "$installed" ] || [ -z "$candidate" ] || [ "$installed" = "$candidate" ]; then
+        echo "0"
+        return
+    fi
+
+    # Extract version components: "6.8.0-94.96" → major=6, minor=8, abi=94
+    local inst_major=$(echo "$installed" | cut -d'.' -f1)
+    local inst_minor=$(echo "$installed" | cut -d'.' -f2)
+    local inst_abi=$(echo "$installed" | sed 's/.*-\([0-9]*\)\..*/\1/')
+
+    local cand_major=$(echo "$candidate" | cut -d'.' -f1)
+    local cand_minor=$(echo "$candidate" | cut -d'.' -f2)
+    local cand_abi=$(echo "$candidate" | sed 's/.*-\([0-9]*\)\..*/\1/')
+
+    # Validate all components are numeric
+    for val in "$inst_major" "$inst_minor" "$inst_abi" "$cand_major" "$cand_minor" "$cand_abi"; do
+        if ! [ "$val" -eq "$val" ] 2>/dev/null; then
+            echo "0"
+            return
+        fi
+    done
+
+    # Calculate weighted score
+    local major_diff=$((cand_major - inst_major))
+    local minor_diff=$((cand_minor - inst_minor))
+    local score=0
+
+    if [ $major_diff -gt 0 ]; then
+        # Major version jump: weight × 100 per major + 10 per minor
+        score=$((major_diff * 100))
+        if [ $minor_diff -gt 0 ]; then
+            score=$((score + minor_diff * 10))
+        fi
+    elif [ $minor_diff -gt 0 ]; then
+        # Minor version jump: weight × 10 per minor
+        score=$((minor_diff * 10))
+    else
+        # Same major.minor: use ABI difference
+        local abi_diff=$((cand_abi - inst_abi))
+        if [ $abi_diff -gt 0 ]; then
+            score=$abi_diff
+        fi
+    fi
+
+    if [ $score -lt 0 ]; then
+        score=0
+    fi
+    echo "$score"
+}
+
 # Main function to get restart information and provide instructions if necessary.
 get_restart_information() {
     # Function parameter: output option how to format user ouput.

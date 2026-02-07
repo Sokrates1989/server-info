@@ -181,8 +181,44 @@ if [ -n "$kernel_policy_output" ]; then
     kernel_candidate_version=$(echo "$kernel_policy_output" | grep "Candidate:" | awk '{print $2}')
 fi
 kernel_update_available="false"
+kernel_versions_behind="0"
 if [ -n "$kernel_installed_version" ] && [ -n "$kernel_candidate_version" ] && [ "$kernel_installed_version" != "$kernel_candidate_version" ]; then
     kernel_update_available="true"
+    # Weighted scoring: major×100 + minor×10 + ABI diff (if same major.minor)
+    # "6.8.0-94.96" → major=6, minor=8, abi=94
+    k_inst_major=$(echo "$kernel_installed_version" | cut -d'.' -f1)
+    k_inst_minor=$(echo "$kernel_installed_version" | cut -d'.' -f2)
+    k_inst_abi=$(echo "$kernel_installed_version" | sed 's/.*-\([0-9]*\)\..*/\1/')
+    k_cand_major=$(echo "$kernel_candidate_version" | cut -d'.' -f1)
+    k_cand_minor=$(echo "$kernel_candidate_version" | cut -d'.' -f2)
+    k_cand_abi=$(echo "$kernel_candidate_version" | sed 's/.*-\([0-9]*\)\..*/\1/')
+    k_valid=true
+    for k_val in "$k_inst_major" "$k_inst_minor" "$k_inst_abi" "$k_cand_major" "$k_cand_minor" "$k_cand_abi"; do
+        if ! [ "$k_val" -eq "$k_val" ] 2>/dev/null; then
+            k_valid=false
+            break
+        fi
+    done
+    if [ "$k_valid" = "true" ]; then
+        k_major_diff=$((k_cand_major - k_inst_major))
+        k_minor_diff=$((k_cand_minor - k_inst_minor))
+        if [ $k_major_diff -gt 0 ]; then
+            kernel_versions_behind=$((k_major_diff * 100))
+            if [ $k_minor_diff -gt 0 ]; then
+                kernel_versions_behind=$((kernel_versions_behind + k_minor_diff * 10))
+            fi
+        elif [ $k_minor_diff -gt 0 ]; then
+            kernel_versions_behind=$((k_minor_diff * 10))
+        else
+            k_abi_diff=$((k_cand_abi - k_inst_abi))
+            if [ $k_abi_diff -gt 0 ]; then
+                kernel_versions_behind=$k_abi_diff
+            fi
+        fi
+        if [ "$kernel_versions_behind" -lt 0 ]; then
+            kernel_versions_behind=0
+        fi
+    fi
 fi
 
 # CPU.
@@ -335,7 +371,8 @@ json_data=$(cat <<EOF
     "running_kernel": "$(uname -r)",
     "installed_version": "$kernel_installed_version",
     "candidate_version": "$kernel_candidate_version",
-    "update_available": "$kernel_update_available"
+    "update_available": "$kernel_update_available",
+    "versions_behind": "$kernel_versions_behind"
   },
   "cpu": {
     "cpu_cores": "$cpu_cores",

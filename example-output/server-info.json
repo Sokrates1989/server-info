@@ -13,7 +13,8 @@
     "running_kernel": "6.8.0-90-generic",
     "installed_version": "6.8.0-90.90",
     "candidate_version": "6.8.0-90.90",
-    "update_available": "false"
+    "update_available": "false",
+    "versions_behind": "0"
   },
   "cpu": {
     "cpu_cores": "16",
