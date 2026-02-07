@@ -478,16 +478,44 @@ get_restart_information() {
         fi
     fi
     
-    # Check if maintenance mode is active (snapshot exists)
+    }
+
+# Check if maintenance mode is active and prompt to exit it.
+#
+# This function should be called at the end of system information display
+# to ensure users see the full system status before being asked about maintenance mode.
+check_and_prompt_maintenance_exit() {
     local maintenance_snapshot="/var/lib/server-info/swarm-maintenance/current_snapshot.sh"
     if [ -f "$maintenance_snapshot" ]; then
         echo -e "\n⚠️  Swarm Maintenance Mode: ACTIVE"
         echo "A service snapshot exists - services may need to be restored."
         echo ""
-        echo "To restore services from the snapshot:"
-        echo "   server-info --maintenance-exit"
+        echo "⚠️  IMPORTANT: Server is not performing its main purpose while in maintenance mode!"
+        echo "   If no maintenance work is in progress, you should exit maintenance mode ASAP."
         echo ""
-        echo "To check maintenance status:"
-        echo "   server-info --maintenance-status"
+        
+        # Interactive prompt to exit maintenance mode
+        echo -n "Do you want to exit maintenance mode now? (Y/n): "
+        read -r response
+        echo ""
+        
+        # Default to Yes if user just presses Enter or answers Y/y
+        if [[ -z "$response" || "$response" =~ ^[Yy]$ ]]; then
+            echo "🔄 Exiting maintenance mode..."
+            if command -v server-info >/dev/null 2>&1; then
+                exec server-info --maintenance-exit
+            else
+                # Fallback: call maintenance_exit directly
+                maintenance_exit
+            fi
+        else
+            echo "Maintenance mode remains active."
+            echo ""
+            echo "To restore services manually:"
+            echo "   server-info --maintenance-exit"
+            echo ""
+            echo "To check maintenance status:"
+            echo "   server-info --maintenance-status"
+        fi
     fi
 }

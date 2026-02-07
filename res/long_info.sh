@@ -129,3 +129,6 @@ fi
 # Revert back to the original directory.
 cd "$current_dir"
 
+# Check for maintenance mode and prompt to exit if active
+check_and_prompt_maintenance_exit
+

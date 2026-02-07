@@ -218,4 +218,7 @@ echo -e "To view full system report use -f option -> server-info -f  "
 echo -e "To view all available options use --help -> server-info --help  "
 echo -e ""
 
+# Check for maintenance mode and prompt to exit if active
+check_and_prompt_maintenance_exit
+
 
