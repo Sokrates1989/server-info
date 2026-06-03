@@ -519,3 +519,388 @@ check_and_prompt_maintenance_exit() {
         fi
     fi
 }
+
+# =============================================================================
+# Hardware and Advanced Metrics Collection Functions
+# =============================================================================
+
+# Get CPU temperature from lm-sensors.
+#
+# Attempts to read CPU temperature using sensors command with fallback
+# to alternative methods if lm-sensors is not available or fails.
+#
+# Returns:
+#     Temperature in Celsius (echoed to stdout), or "N/A" if unavailable.
+get_cpu_temperature() {
+    local temp="N/A"
+    
+    # Try lm-sensors first
+    if command -v sensors &> /dev/null; then
+        # Try JSON output first (sensors -j requires lm-sensors 3.4.0+)
+        if sensors -j &> /dev/null 2>&1; then
+            # Parse JSON for CPU/package temperature
+            temp=$(sensors -j 2>/dev/null | jq -r 'to_entries | map(select(.key | test("core|Package|CPU"; "i"))) | .[0].value | to_entries[] | select(.key | test("input"; "i")) | .value' 2>/dev/null | head -1)
+        fi
+        
+        # Fallback to text parsing if JSON failed or returned empty
+        if [ "$temp" = "N/A" ] || [ -z "$temp" ]; then
+            temp=$(sensors 2>/dev/null | grep -E "Core|Package|CPU" | head -1 | awk '{print $3}' | tr -d '+°C' 2>/dev/null)
+        fi
+    fi
+    
+    # Fallback to thermal zone reading (Linux sysfs)
+    if [ "$temp" = "N/A" ] || [ -z "$temp" ]; then
+        if [ -d "/sys/class/thermal" ]; then
+            # Find the highest temperature among all thermal zones
+            local max_temp=0
+            for zone in /sys/class/thermal/thermal_zone*/temp; do
+                if [ -f "$zone" ]; then
+                    local zone_temp=$(cat "$zone" 2>/dev/null)
+                    if [ -n "$zone_temp" ] && [ "$zone_temp" -gt "$max_temp" ]; then
+                        max_temp=$zone_temp
+                    fi
+                fi
+            done
+            if [ "$max_temp" -gt 0 ]; then
+                # Convert millidegrees to degrees
+                temp=$((max_temp / 1000))
+            fi
+        fi
+    fi
+    
+    # Validate result is numeric
+    if [ "$temp" != "N/A" ] && [ -n "$temp" ]; then
+        if ! [[ "$temp" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            temp="N/A"
+        fi
+    fi
+    
+    echo "${temp:-N/A}"
+}
+
+# Get fan speed from lm-sensors.
+#
+# Returns:
+#     Fan speed in RPM (echoed to stdout), or "N/A" if unavailable.
+get_fan_speed() {
+    local fan_speed="N/A"
+    
+    if command -v sensors &> /dev/null; then
+        # Try to get fan speed from sensors output
+        fan_speed=$(sensors 2>/dev/null | grep -E "fan[0-9]" | head -1 | awk '{print $2,$3}' | tr -d ' RPM' 2>/dev/null)
+    fi
+    
+    # Validate result is numeric
+    if [ "$fan_speed" != "N/A" ] && [ -n "$fan_speed" ]; then
+        if ! [[ "$fan_speed" =~ ^[0-9]+$ ]]; then
+            fan_speed="N/A"
+        fi
+    fi
+    
+    echo "${fan_speed:-N/A}"
+}
+
+# Get disk SMART health status.
+#
+# Returns:
+#     JSON string with SMART status (echoed to stdout), or "N/A" if unavailable.
+get_disk_smart_health() {
+    local smart_status='{"status": "N/A", "devices": []}'
+    
+    if command -v smartctl &> /dev/null; then
+        # Get list of devices
+        local devices=$(lsblk -d -o NAME -n 2>/dev/null | grep -E "^sd|^nvme|^vd" 2>/dev/null)
+        
+        if [ -n "$devices" ]; then
+            local device_info="["
+            local first=true
+            
+            while IFS= read -r device; do
+                [ -z "$device" ] && continue
+                
+                local device_path="/dev/$device"
+                local health="unknown"
+                local temp="N/A"
+                
+                # Try to get SMART health
+                local smart_output=$(smartctl -H "$device_path" 2>/dev/null)
+                if [ $? -eq 0 ]; then
+                    if echo "$smart_output" | grep -q "SMART overall-health self-assessment test result: PASSED"; then
+                        health="passed"
+                    elif echo "$smart_output" | grep -q "SMART overall-health self-assessment test result: FAILED"; then
+                        health="failed"
+                    fi
+                    
+                    # Try to get temperature
+                    temp=$(smartctl -A "$device_path" 2>/dev/null | grep -E "Temperature.*" | head -1 | awk '{print $10}' 2>/dev/null)
+                fi
+                
+                if [ "$first" = true ]; then
+                    first=false
+                else
+                    device_info+=","
+                fi
+                
+                device_info+="{\"device\": \"$device\", \"health\": \"$health\", \"temperature\": \"$temp\"}"
+            done <<< "$devices"
+            
+            device_info+="]"
+            smart_status="{\"status\": \"available\", \"devices\": $device_info}"
+        else
+            smart_status='{"status": "no_devices", "devices": []}'
+        fi
+    else
+        smart_status='{"status": "smartctl_not_installed", "devices": []}'
+    fi
+    
+    echo "$smart_status"
+}
+
+# Get I/O wait percentage.
+#
+# Returns:
+#     I/O wait percentage (echoed to stdout), or "N/A" if unavailable.
+get_io_wait() {
+    local io_wait="N/A"
+    
+    if command -v vmstat &> /dev/null; then
+        # Get I/O wait from vmstat (wa column, typically column 5)
+        io_wait=$(vmstat 1 2 2>/dev/null | tail -1 | awk '{print $16}' 2>/dev/null)
+    elif command -v iostat &> /dev/null; then
+        # Alternative using iostat
+        io_wait=$(iostat -x 1 1 2>/dev/null | tail -1 | awk '{print $4}' 2>/dev/null)
+    fi
+    
+    # Validate result is numeric
+    if [ "$io_wait" != "N/A" ] && [ -n "$io_wait" ]; then
+        if ! [[ "$io_wait" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            io_wait="N/A"
+        fi
+    fi
+    
+    echo "${io_wait:-N/A}"
+}
+
+# Get system load averages.
+#
+# Returns:
+#     JSON string with 1min, 5min, 15min load averages (echoed to stdout).
+get_system_load() {
+    local load_1min="N/A"
+    local load_5min="N/A"
+    local load_15min="N/A"
+    
+    local uptime_output=$(uptime 2>/dev/null)
+    if [ -n "$uptime_output" ]; then
+        load_1min=$(echo "$uptime_output" | awk -F'average:' '{print $2}' | awk '{print $1}' | tr -d ',' 2>/dev/null)
+        load_5min=$(echo "$uptime_output" | awk -F'average:' '{print $2}' | awk '{print $2}' | tr -d ',' 2>/dev/null)
+        load_15min=$(echo "$uptime_output" | awk -F'average:' '{print $2}' | awk '{print $3}' 2>/dev/null)
+    fi
+    
+    echo "{\"load_1min\": \"$load_1min\", \"load_5min\": \"$load_5min\", \"load_15min\": \"$load_15min\"}"
+}
+
+# Get file descriptor usage.
+#
+# Returns:
+#     JSON string with FD usage statistics (echoed to stdout).
+get_file_descriptor_usage() {
+    local allocated="0"
+    local maximum="0"
+    local usage_percent="N/A"
+    
+    if [ -f "/proc/sys/fs/file-nr" ]; then
+        local fd_info=$(cat /proc/sys/fs/file-nr 2>/dev/null)
+        if [ -n "$fd_info" ]; then
+            allocated=$(echo "$fd_info" | awk '{print $1}' 2>/dev/null)
+            maximum=$(echo "$fd_info" | awk '{print $3}' 2>/dev/null)
+            
+            if [ "$maximum" -gt 0 ]; then
+                usage_percent=$(echo "scale=2; $allocated / $maximum * 100" | bc 2>/dev/null)
+            fi
+        fi
+    fi
+    
+    echo "{\"allocated\": \"$allocated\", \"maximum\": \"$maximum\", \"usage_percent\": \"$usage_percent\"}"
+}
+
+# Get network interface error statistics.
+#
+# Returns:
+#     JSON string with network error statistics (echoed to stdout).
+get_network_errors() {
+    local errors='{"status": "N/A", "interfaces": []}'
+    
+    if [ -f "/proc/net/dev" ]; then
+        local interfaces="["
+        local first=true
+        
+        # Skip header lines, process each interface
+        while IFS=: read -r interface stats; do
+            [ -z "$interface" ] && continue
+            # Skip header lines
+            [[ "$interface" =~ ^(Inter|face|lo) ]] && continue
+            
+            interface=$(echo "$interface" | tr -d ' ')
+            
+            # Parse stats: receive bytes, packets, errs, drop, fifo, frame, compressed, multicast | transmit bytes, packets, errs, drop, fifo, colls, carrier, compressed
+            local rx_err=$(echo "$stats" | awk '{print $3}' 2>/dev/null)
+            local rx_drop=$(echo "$stats" | awk '{print $4}' 2>/dev/null)
+            local tx_err=$(echo "$stats" | awk '{print $11}' 2>/dev/null)
+            local tx_drop=$(echo "$stats" | awk '{print $12}' 2>/dev/null)
+            
+            if [ "$first" = true ]; then
+                first=false
+            else
+                interfaces+=","
+            fi
+            
+            interfaces+="{\"interface\": \"$interface\", \"rx_errors\": \"$rx_err\", \"rx_dropped\": \"$rx_drop\", \"tx_errors\": \"$tx_err\", \"tx_dropped\": \"$tx_drop\"}"
+        done < <(tail -n +3 /proc/net/dev 2>/dev/null)
+        
+        interfaces+="]"
+        errors="{\"status\": \"available\", \"interfaces\": $interfaces}"
+    fi
+    
+    echo "$errors"
+}
+
+# Get ZFS pool health status.
+#
+# Returns:
+#     JSON string with ZFS pool status (echoed to stdout).
+get_zfs_status() {
+    local zfs_status='{"status": "not_installed", "pools": []}'
+    
+    if command -v zpool &> /dev/null; then
+        local pools=$(zpool list -H -o name 2>/dev/null)
+        
+        if [ -n "$pools" ]; then
+            local pool_info="["
+            local first=true
+            
+            while IFS= read -r pool; do
+                [ -z "$pool" ] && continue
+                
+                local health=$(zpool list -H -o health "$pool" 2>/dev/null)
+                local capacity=$(zpool list -H -o capacity "$pool" 2>/dev/null)
+                
+                if [ "$first" = true ]; then
+                    first=false
+                else
+                    pool_info+=","
+                fi
+                
+                pool_info+="{\"pool\": \"$pool\", \"health\": \"$health\", \"capacity\": \"$capacity\"}"
+            done <<< "$pools"
+            
+            pool_info+="]"
+            zfs_status="{\"status\": \"available\", \"pools\": $pool_info}"
+        else
+            zfs_status='{"status": "no_pools", "pools": []}'
+        fi
+    fi
+    
+    echo "$zfs_status"
+}
+
+# Get RAID array status (mdadm).
+#
+# Returns:
+#     JSON string with RAID array status (echoed to stdout).
+get_raid_status() {
+    local raid_status='{"status": "not_installed", "arrays": []}'
+    
+    if command -v mdadm &> /dev/null; then
+        local arrays=$(mdadm --detail --scan 2>/dev/null | grep ARRAY | awk '{print $2}')
+        
+        if [ -n "$arrays" ]; then
+            local array_info="["
+            local first=true
+            
+            while IFS= read -r array; do
+                [ -z "$array" ] && continue
+                
+                local detail=$(mdadm --detail "$array" 2>/dev/null)
+                local state=$(echo "$detail" | grep "State :" | awk '{print $3}' 2>/dev/null)
+                local raid_level=$(echo "$detail" | grep "Raid Level :" | awk '{print $4}' 2>/dev/null)
+                
+                if [ "$first" = true ]; then
+                    first=false
+                else
+                    array_info+=","
+                fi
+                
+                array_info+="{\"array\": \"$array\", \"state\": \"$state\", \"raid_level\": \"$raid_level\"}"
+            done <<< "$arrays"
+            
+            array_info+="]"
+            raid_status="{\"status\": \"available\", \"arrays\": $array_info}"
+        else
+            raid_status='{"status": "no_arrays", "arrays": []}'
+        fi
+    fi
+    
+    echo "$raid_status"
+}
+
+# Get GPU temperature (NVIDIA or AMD).
+#
+# Returns:
+#     GPU temperature in Celsius (echoed to stdout), or "N/A" if unavailable.
+get_gpu_temperature() {
+    local gpu_temp="N/A"
+    
+    # Try NVIDIA GPU
+    if command -v nvidia-smi &> /dev/null; then
+        gpu_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -1)
+    fi
+    
+    # Try AMD GPU (ROCm)
+    if [ "$gpu_temp" = "N/A" ] || [ -z "$gpu_temp" ]; then
+        if command -v rocm-smi &> /dev/null; then
+            gpu_temp=$(rocm-smi --showtemp --showuse -u 2>/dev/null | grep -E "GPU Temp" | head -1 | awk '{print $4}' | tr -d 'C' 2>/dev/null)
+        fi
+    fi
+    
+    # Validate result is numeric
+    if [ "$gpu_temp" != "N/A" ] && [ -n "$gpu_temp" ]; then
+        if ! [[ "$gpu_temp" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            gpu_temp="N/A"
+        fi
+    fi
+    
+    echo "${gpu_temp:-N/A}"
+}
+
+# Get NTP time sync status.
+#
+# Returns:
+#     JSON string with NTP sync information (echoed to stdout).
+get_ntp_sync_status() {
+    local ntp_status='{"status": "N/A", "offset_ms": "N/A", "synced": false}'
+    
+    # Try timedatectl
+    if command -v timedatectl &> /dev/null; then
+        local timedate_output=$(timedatectl 2>/dev/null)
+        local system_clock_synced=$(echo "$timedate_output" | grep "System clock synchronized:" | awk '{print $4}' 2>/dev/null)
+        
+        if [ "$system_clock_synced" = "yes" ]; then
+            ntp_status='{"status": "synced", "offset_ms": "N/A", "synced": true}'
+        else
+            ntp_status='{"status": "not_synced", "offset_ms": "N/A", "synced": false}'
+        fi
+    fi
+    
+    # Try ntpq for offset if available
+    if command -v ntpq &> /dev/null; then
+        local offset=$(ntpq -p 2>/dev/null | grep "*" | awk '{print $9}' 2>/dev/null)
+        if [ -n "$offset" ]; then
+            # Convert to milliseconds
+            offset_ms=$(echo "$offset * 1000" | bc 2>/dev/null)
+            ntp_status="{\"status\": \"available\", \"offset_ms\": \"${offset_ms:-N/A}\", \"synced\": true}"
+        fi
+    fi
+    
+    echo "$ntp_status"
+}

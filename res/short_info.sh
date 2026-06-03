@@ -62,6 +62,26 @@ echo -e ""
 # CPU Usage.
 display_cpu_info
 
+# Hardware Metrics (with error handling).
+cpu_temp=$(get_cpu_temperature)
+if [ "$cpu_temp" != "N/A" ]; then
+    printf "%-${output_tab_space}s: %s\n" "CPU Temperature" "$cpu_temp°C"
+else
+    printf "%-${output_tab_space}s: %s\n" "CPU Temperature" "N/A (sensors not available)"
+fi
+
+fan_speed=$(get_fan_speed)
+if [ "$fan_speed" != "N/A" ]; then
+    printf "%-${output_tab_space}s: %s\n" "Fan Speed" "$fan_speed RPM"
+else
+    printf "%-${output_tab_space}s: %s\n" "Fan Speed" "N/A (sensors not available)"
+fi
+
+gpu_temp=$(get_gpu_temperature)
+if [ "$gpu_temp" != "N/A" ]; then
+    printf "%-${output_tab_space}s: %s\n" "GPU Temperature" "$gpu_temp°C"
+fi
+
 # Disk usage.
 mount_point="/"
 df_output=$(df -h "$mount_point" | awk -v mp="$mount_point" 'NR==2 {printf "%s of %s (%s)", $5, $2, $3}')
@@ -99,6 +119,31 @@ printf "%-${output_tab_space}s: %s\n" "Processes" "$amount_processes"
 logged_in_users=$(who | wc -l)
 printf "%-${output_tab_space}s: %s\n" "Users logged in" "$logged_in_users"
 
+
+# Spacer.
+echo -e ""
+
+# Advanced Metrics (with error handling).
+io_wait=$(get_io_wait)
+if [ "$io_wait" != "N/A" ]; then
+    printf "%-${output_tab_space}s: %s\n" "I/O Wait" "$io_wait%"
+else
+    printf "%-${output_tab_space}s: %s\n" "I/O Wait" "N/A (vmstat not available)"
+fi
+
+# System Load
+load_json=$(get_system_load)
+load_1min=$(echo "$load_json" | jq -r '.load_1min' 2>/dev/null)
+if [ "$load_1min" != "N/A" ]; then
+    printf "%-${output_tab_space}s: %s\n" "System Load (1min)" "$load_1min"
+fi
+
+# File Descriptors
+fd_json=$(get_file_descriptor_usage)
+fd_usage=$(echo "$fd_json" | jq -r '.usage_percent' 2>/dev/null)
+if [ "$fd_usage" != "N/A" ]; then
+    printf "%-${output_tab_space}s: %s\n" "FD Usage" "$fd_usage%"
+fi
 
 # Spacer.
 echo -e ""

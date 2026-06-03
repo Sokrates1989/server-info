@@ -46,6 +46,39 @@ check_kernel_info 28
 echo -e "\n\nCpu Usage:"
 display_cpu_info
 
+echo -e "\n\nHardware Metrics:"
+# CPU Temperature
+cpu_temp=$(get_cpu_temperature)
+if [ "$cpu_temp" != "N/A" ]; then
+    echo -e "CPU Temperature: $cpu_temp°C"
+else
+    echo -e "CPU Temperature: N/A (sensors not available)"
+fi
+
+# Fan Speed
+fan_speed=$(get_fan_speed)
+if [ "$fan_speed" != "N/A" ]; then
+    echo -e "Fan Speed: $fan_speed RPM"
+else
+    echo -e "Fan Speed: N/A (sensors not available)"
+fi
+
+# GPU Temperature
+gpu_temp=$(get_gpu_temperature)
+if [ "$gpu_temp" != "N/A" ]; then
+    echo -e "GPU Temperature: $gpu_temp°C"
+else
+    echo -e "GPU Temperature: N/A (no GPU or nvidia-smi/rocm-smi not available)"
+fi
+
+# Disk SMART Health
+smart_json=$(get_disk_smart_health)
+smart_status=$(echo "$smart_json" | jq -r '.status' 2>/dev/null)
+echo -e "Disk SMART Health: $smart_status"
+if [ "$smart_status" = "available" ]; then
+    echo "$smart_json" | jq -r '.devices[] | "  - \(.device): \(.health) (\(.temperature)°C)"' 2>/dev/null || echo "  Unable to parse SMART data"
+fi
+
 echo -e "\n\nDisk Usage:"
 df -h /
 
@@ -65,6 +98,68 @@ ps aux | wc -l
 
 echo -e "\n\nLogged-in Users:"
 who
+
+echo -e "\n\nAdvanced Metrics:"
+# I/O Wait
+io_wait=$(get_io_wait)
+if [ "$io_wait" != "N/A" ]; then
+    echo -e "I/O Wait: $io_wait%"
+else
+    echo -e "I/O Wait: N/A (vmstat not available)"
+fi
+
+# System Load
+load_json=$(get_system_load)
+load_1min=$(echo "$load_json" | jq -r '.load_1min' 2>/dev/null)
+load_5min=$(echo "$load_json" | jq -r '.load_5min' 2>/dev/null)
+load_15min=$(echo "$load_json" | jq -r '.load_15min' 2>/dev/null)
+if [ "$load_1min" != "N/A" ]; then
+    echo -e "System Load Averages: 1min=$load_1min, 5min=$load_5min, 15min=$load_15min"
+fi
+
+# File Descriptors
+fd_json=$(get_file_descriptor_usage)
+fd_allocated=$(echo "$fd_json" | jq -r '.allocated' 2>/dev/null)
+fd_maximum=$(echo "$fd_json" | jq -r '.maximum' 2>/dev/null)
+fd_usage=$(echo "$fd_json" | jq -r '.usage_percent' 2>/dev/null)
+if [ "$fd_usage" != "N/A" ]; then
+    echo -e "File Descriptors: $fd_allocated allocated of $fd_maximum ($fd_usage%)"
+fi
+
+# Network Errors
+net_errors_json=$(get_network_errors)
+net_status=$(echo "$net_errors_json" | jq -r '.status' 2>/dev/null)
+echo -e "Network Errors Status: $net_status"
+
+# ZFS Status
+zfs_json=$(get_zfs_status)
+zfs_status=$(echo "$zfs_json" | jq -r '.status' 2>/dev/null)
+if [ "$zfs_status" = "available" ]; then
+    echo -e "ZFS Pools:"
+    echo "$zfs_json" | jq -r '.pools[] | "  - \(.pool): \(.health) (\(.capacity))"' 2>/dev/null || echo "  Unable to parse ZFS data"
+else
+    echo -e "ZFS Status: $zfs_status"
+fi
+
+# RAID Status
+raid_json=$(get_raid_status)
+raid_status=$(echo "$raid_json" | jq -r '.status' 2>/dev/null)
+if [ "$raid_status" = "available" ]; then
+    echo -e "RAID Arrays:"
+    echo "$raid_json" | jq -r '.arrays[] | "  - \(.array): \(.state) (\(.raid_level))"' 2>/dev/null || echo "  Unable to parse RAID data"
+else
+    echo -e "RAID Status: $raid_status"
+fi
+
+# NTP Sync
+ntp_json=$(get_ntp_sync_status)
+ntp_status=$(echo "$ntp_json" | jq -r '.status' 2>/dev/null)
+ntp_offset=$(echo "$ntp_json" | jq -r '.offset_ms' 2>/dev/null)
+if [ "$ntp_offset" != "N/A" ]; then
+    echo -e "NTP Sync: $ntp_status (offset: ${ntp_offset}ms)"
+else
+    echo -e "NTP Sync: $ntp_status"
+fi
 
 echo -e "\n\nLast Login Information:"
 last

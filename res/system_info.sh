@@ -231,6 +231,40 @@ total_disk_avail=$(df -h "$mount_point" | awk -v mp="$mount_point" 'NR==2 {print
 disk_usage_amount=$(df -h "$mount_point" | awk -v mp="$mount_point" 'NR==2 {print $3}')
 disk_usage_percentage=$(df -h "$mount_point" | awk -v mp="$mount_point" 'NR==2 {print $5}') # Just percentage string -> 2%
 
+# Hardware and Advanced Metrics (with error handling).
+# CPU Temperature
+cpu_temperature_celsius=$(get_cpu_temperature)
+
+# Fan Speed
+fan_speed_rpm=$(get_fan_speed)
+
+# Disk SMART Health
+disk_smart_health_json=$(get_disk_smart_health)
+
+# I/O Wait
+io_wait_percentage=$(get_io_wait)
+
+# System Load Averages
+system_load_json=$(get_system_load)
+
+# File Descriptor Usage
+file_descriptor_usage_json=$(get_file_descriptor_usage)
+
+# Network Interface Errors
+network_errors_json=$(get_network_errors)
+
+# ZFS Status
+zfs_status_json=$(get_zfs_status)
+
+# RAID Status
+raid_status_json=$(get_raid_status)
+
+# GPU Temperature
+gpu_temperature_celsius=$(get_gpu_temperature)
+
+# NTP Sync Status
+ntp_sync_status_json=$(get_ntp_sync_status)
+
 # Memory Usage.
 total_memory=$(free -m | awk '/Mem:/ {print $2}')
 total_memory_human=$(free -h | awk '/Mem:/ {print $2}')
@@ -378,6 +412,23 @@ json_data=$(cat <<EOF
     "cpu_cores": "$cpu_cores",
     "last_15min_cpu_percentage": "$last_15min_cpu_percentage"
   },
+  "hardware": {
+    "cpu_temperature_celsius": "$cpu_temperature_celsius",
+    "fan_speed_rpm": "$fan_speed_rpm",
+    "gpu_temperature_celsius": "$gpu_temperature_celsius"
+  },
+  "disk_smart": $disk_smart_health_json,
+  "io_wait": {
+    "io_wait_percentage": "$io_wait_percentage"
+  },
+  "system_load": $system_load_json,
+  "file_descriptors": $file_descriptor_usage_json,
+  "network_errors": $network_errors_json,
+  "storage_arrays": {
+    "zfs": $zfs_status_json,
+    "raid": $raid_status_json
+  },
+  "ntp_sync": $ntp_sync_status_json,
   "disk": {
     "mount_point": "$mount_point",
     "total_disk_avail": "$total_disk_avail",
