@@ -499,7 +499,7 @@ EOF
 echo -e "$json_data" > "$output_file"
 echo -e "$json_data"
 
-echo -e "System information has been saved to $output_file with timestamp $timestamp"
+echo -e "System information has been saved to $output_file with timestamp $timestamp" >&2
 
 
 
