@@ -52,7 +52,11 @@ cpu_temp=$(get_cpu_temperature)
 if [ "$cpu_temp" != "N/A" ]; then
     echo -e "CPU Temperature: $cpu_temp°C"
 else
-    echo -e "CPU Temperature: N/A (install: sudo apt install lm-sensors && sudo sensors-detect)"
+    if command -v sensors &> /dev/null; then
+        echo -e "CPU Temperature: N/A (no sensor detected - try: sudo sensors-detect)"
+    else
+        echo -e "CPU Temperature: N/A (install: sudo apt install lm-sensors && sudo sensors-detect)"
+    fi
 fi
 
 # Fan Speed
@@ -60,7 +64,11 @@ fan_speed=$(get_fan_speed)
 if [ "$fan_speed" != "N/A" ]; then
     echo -e "Fan Speed: $fan_speed RPM"
 else
-    echo -e "Fan Speed: N/A (install: sudo apt install lm-sensors)"
+    if command -v sensors &> /dev/null; then
+        echo -e "Fan Speed: N/A (no fan detected or not exposed by hardware)"
+    else
+        echo -e "Fan Speed: N/A (install: sudo apt install lm-sensors)"
+    fi
 fi
 
 # GPU Temperature
