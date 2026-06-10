@@ -524,6 +524,85 @@ check_and_prompt_maintenance_exit() {
 # Hardware and Advanced Metrics Collection Functions
 # =============================================================================
 
+# Get a temperature from a hwmon device name pattern.
+#
+# Args:
+#     $1: Extended regular expression matching the hwmon device name.
+#
+# Returns:
+#     Temperature in Celsius (echoed to stdout), or nothing if unavailable.
+get_hwmon_temperature() {
+    local name_pattern="$1"
+    local hwmon_dir
+
+    for hwmon_dir in /sys/class/hwmon/hwmon*; do
+        [ -d "$hwmon_dir" ] || continue
+
+        local hwmon_name=$(cat "$hwmon_dir/name" 2>/dev/null)
+        [ -n "$hwmon_name" ] || continue
+
+        if [[ "$hwmon_name" =~ $name_pattern ]]; then
+            local input_file=""
+            local label_file
+
+            for label_file in "$hwmon_dir"/temp*_label; do
+                [ -f "$label_file" ] || continue
+                local label=$(cat "$label_file" 2>/dev/null)
+
+                if [[ "$label" =~ ^(Tctl|Tdie|edge|Composite|Package\ id\ .*)$ ]]; then
+                    input_file="${label_file%_label}_input"
+                    break
+                fi
+            done
+
+            if [ -z "$input_file" ]; then
+                local candidate_file
+                for candidate_file in "$hwmon_dir"/temp*_input; do
+                    [ -f "$candidate_file" ] || continue
+                    input_file="$candidate_file"
+                    break
+                done
+            fi
+
+            if [ -n "$input_file" ] && [ -f "$input_file" ]; then
+                local raw_temp=$(cat "$input_file" 2>/dev/null)
+
+                if [[ "$raw_temp" =~ ^[0-9]+$ ]] && [ "$raw_temp" -gt 0 ]; then
+                    echo $((raw_temp / 1000))
+                    return 0
+                fi
+            fi
+        fi
+    done
+
+    return 1
+}
+
+# Get the first fan speed exposed through hwmon.
+#
+# Returns:
+#     Fan speed in RPM (echoed to stdout), or nothing if unavailable.
+get_hwmon_fan_speed() {
+    local hwmon_dir
+
+    for hwmon_dir in /sys/class/hwmon/hwmon*; do
+        [ -d "$hwmon_dir" ] || continue
+
+        local fan_file
+        for fan_file in "$hwmon_dir"/fan*_input; do
+            [ -f "$fan_file" ] || continue
+
+            local raw_speed=$(cat "$fan_file" 2>/dev/null)
+            if [[ "$raw_speed" =~ ^[0-9]+$ ]] && [ "$raw_speed" -gt 0 ]; then
+                echo "$raw_speed"
+                return 0
+            fi
+        done
+    done
+
+    return 1
+}
+
 # Get CPU temperature from lm-sensors.
 #
 # Attempts to read CPU temperature using sensors command with fallback
@@ -546,6 +625,11 @@ get_cpu_temperature() {
         if [ "$temp" = "N/A" ] || [ -z "$temp" ]; then
             temp=$(sensors 2>/dev/null | grep -E "Core|Package|CPU" | head -1 | awk '{print $3}' | tr -d '+°C' 2>/dev/null)
         fi
+    fi
+    
+    # Fallback to CPU-related hwmon devices
+    if [ "$temp" = "N/A" ] || [ -z "$temp" ]; then
+        temp=$(get_hwmon_temperature 'k10temp|coretemp|zenpower|cpu_thermal|soc_thermal|fam15h_power' 2>/dev/null)
     fi
     
     # Fallback to thermal zone reading (Linux sysfs)
@@ -588,6 +672,11 @@ get_fan_speed() {
     if command -v sensors &> /dev/null; then
         # Try to get fan speed from sensors output
         fan_speed=$(sensors 2>/dev/null | grep -E "fan[0-9]" | head -1 | awk '{print $2,$3}' | tr -d ' RPM' 2>/dev/null)
+    fi
+    
+    # Fallback to hwmon fan sysfs
+    if [ "$fan_speed" = "N/A" ] || [ -z "$fan_speed" ]; then
+        fan_speed=$(get_hwmon_fan_speed 2>/dev/null)
     fi
     
     # Validate result is numeric
@@ -689,15 +778,40 @@ get_system_load() {
     local load_1min="N/A"
     local load_5min="N/A"
     local load_15min="N/A"
+    local cpu_cores="N/A"
+    local normalized_1min_percent="N/A"
+    local normalized_5min_percent="N/A"
+    local normalized_15min_percent="N/A"
     
-    local uptime_output=$(uptime 2>/dev/null)
-    if [ -n "$uptime_output" ]; then
-        load_1min=$(echo "$uptime_output" | awk -F'average:' '{print $2}' | awk '{print $1}' | tr -d ',' 2>/dev/null)
-        load_5min=$(echo "$uptime_output" | awk -F'average:' '{print $2}' | awk '{print $2}' | tr -d ',' 2>/dev/null)
-        load_15min=$(echo "$uptime_output" | awk -F'average:' '{print $2}' | awk '{print $3}' 2>/dev/null)
+    # Prefer /proc/loadavg (always available on Linux)
+    if [ -r "/proc/loadavg" ]; then
+        load_1min=$(awk '{print $1}' /proc/loadavg 2>/dev/null)
+        load_5min=$(awk '{print $2}' /proc/loadavg 2>/dev/null)
+        load_15min=$(awk '{print $3}' /proc/loadavg 2>/dev/null)
+    else
+        local uptime_output=$(uptime 2>/dev/null)
+        if [ -n "$uptime_output" ]; then
+            load_1min=$(echo "$uptime_output" | awk -F'average:' '{print $2}' | awk '{print $1}' | tr -d ',' 2>/dev/null)
+            load_5min=$(echo "$uptime_output" | awk -F'average:' '{print $2}' | awk '{print $2}' | tr -d ',' 2>/dev/null)
+            load_15min=$(echo "$uptime_output" | awk -F'average:' '{print $2}' | awk '{print $3}' 2>/dev/null)
+        fi
     fi
     
-    echo "{\"load_1min\": \"$load_1min\", \"load_5min\": \"$load_5min\", \"load_15min\": \"$load_15min\"}"
+    # Compute normalized load percentages (load / cores * 100)
+    cpu_cores=$(nproc 2>/dev/null)
+    if [[ "$cpu_cores" =~ ^[0-9]+$ ]] && [ "$cpu_cores" -gt 0 ] && command -v bc &> /dev/null; then
+        if [[ "$load_1min" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            normalized_1min_percent=$(echo "scale=2; $load_1min / $cpu_cores * 100" | bc 2>/dev/null)
+        fi
+        if [[ "$load_5min" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            normalized_5min_percent=$(echo "scale=2; $load_5min / $cpu_cores * 100" | bc 2>/dev/null)
+        fi
+        if [[ "$load_15min" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            normalized_15min_percent=$(echo "scale=2; $load_15min / $cpu_cores * 100" | bc 2>/dev/null)
+        fi
+    fi
+    
+    echo "{\"load_1min\": \"$load_1min\", \"load_5min\": \"$load_5min\", \"load_15min\": \"$load_15min\", \"cpu_cores\": \"$cpu_cores\", \"normalized_1min_percent\": \"$normalized_1min_percent\", \"normalized_5min_percent\": \"$normalized_5min_percent\", \"normalized_15min_percent\": \"$normalized_15min_percent\"}"
 }
 
 # Get file descriptor usage.
@@ -715,8 +829,10 @@ get_file_descriptor_usage() {
             allocated=$(echo "$fd_info" | awk '{print $1}' 2>/dev/null)
             maximum=$(echo "$fd_info" | awk '{print $3}' 2>/dev/null)
             
-            if [ "$maximum" -gt 0 ]; then
+            if [ "$maximum" -gt 0 ] 2>/dev/null && [ "$maximum" -lt 1000000000000 ] 2>/dev/null; then
                 usage_percent=$(echo "scale=2; $allocated / $maximum * 100" | bc 2>/dev/null)
+            else
+                usage_percent="N/A"
             fi
         fi
     fi
@@ -822,8 +938,8 @@ get_raid_status() {
                 [ -z "$array" ] && continue
                 
                 local detail=$(mdadm --detail "$array" 2>/dev/null)
-                local state=$(echo "$detail" | grep "State :" | awk '{print $3}' 2>/dev/null)
-                local raid_level=$(echo "$detail" | grep "Raid Level :" | awk '{print $4}' 2>/dev/null)
+                local state=$(echo "$detail" | awk -F': ' '/State :/ {print $2; exit}' 2>/dev/null)
+                local raid_level=$(echo "$detail" | awk -F': ' '/Raid Level :/ {print $2; exit}' 2>/dev/null)
                 
                 if [ "$first" = true ]; then
                     first=false
@@ -863,6 +979,11 @@ get_gpu_temperature() {
         fi
     fi
     
+    # Fallback to amdgpu hwmon device
+    if [ "$gpu_temp" = "N/A" ] || [ -z "$gpu_temp" ]; then
+        gpu_temp=$(get_hwmon_temperature 'amdgpu' 2>/dev/null)
+    fi
+    
     # Validate result is numeric
     if [ "$gpu_temp" != "N/A" ] && [ -n "$gpu_temp" ]; then
         if ! [[ "$gpu_temp" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
@@ -899,6 +1020,17 @@ get_ntp_sync_status() {
             # Convert to milliseconds
             offset_ms=$(echo "$offset * 1000" | bc 2>/dev/null)
             ntp_status="{\"status\": \"available\", \"offset_ms\": \"${offset_ms:-N/A}\", \"synced\": true}"
+        fi
+    fi
+    
+    # Try chrony for offset if ntpq did not provide one
+    if [ "$ntp_status" = '{"status": "synced", "offset_ms": "N/A", "synced": true}' ] || [ "$ntp_status" = '{"status": "not_synced", "offset_ms": "N/A", "synced": false}' ]; then
+        if command -v chronyc &> /dev/null; then
+            local chrony_offset=$(chronyc tracking 2>/dev/null | awk -F': +' '/Last offset/ {print $2}' | awk '{print $1}' 2>/dev/null)
+            if [ -n "$chrony_offset" ]; then
+                offset_ms=$(echo "$chrony_offset * 1000" | bc 2>/dev/null)
+                ntp_status="{\"status\": \"available\", \"offset_ms\": \"${offset_ms:-N/A}\", \"synced\": true}"
+            fi
         fi
     fi
     

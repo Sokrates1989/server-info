@@ -67,14 +67,14 @@ cpu_temp=$(get_cpu_temperature)
 if [ "$cpu_temp" != "N/A" ]; then
     printf "%-${output_tab_space}s: %s\n" "CPU Temperature" "$cpu_temp°C"
 else
-    printf "%-${output_tab_space}s: %s\n" "CPU Temperature" "N/A (sensors not available)"
+    printf "%-${output_tab_space}s: %s\n" "CPU Temperature" "N/A (install: sudo apt install lm-sensors && sudo sensors-detect)"
 fi
 
 fan_speed=$(get_fan_speed)
 if [ "$fan_speed" != "N/A" ]; then
     printf "%-${output_tab_space}s: %s\n" "Fan Speed" "$fan_speed RPM"
 else
-    printf "%-${output_tab_space}s: %s\n" "Fan Speed" "N/A (sensors not available)"
+    printf "%-${output_tab_space}s: %s\n" "Fan Speed" "N/A (install: sudo apt install lm-sensors)"
 fi
 
 gpu_temp=$(get_gpu_temperature)
@@ -128,21 +128,39 @@ io_wait=$(get_io_wait)
 if [ "$io_wait" != "N/A" ]; then
     printf "%-${output_tab_space}s: %s\n" "I/O Wait" "$io_wait%"
 else
-    printf "%-${output_tab_space}s: %s\n" "I/O Wait" "N/A (vmstat not available)"
+    printf "%-${output_tab_space}s: %s\n" "I/O Wait" "N/A (install: sudo apt install procps)"
 fi
 
-# System Load
+# System Load (raw + normalized percentage)
 load_json=$(get_system_load)
 load_1min=$(echo "$load_json" | jq -r '.load_1min' 2>/dev/null)
-if [ "$load_1min" != "N/A" ]; then
-    printf "%-${output_tab_space}s: %s\n" "System Load (1min)" "$load_1min"
+load_5min=$(echo "$load_json" | jq -r '.load_5min' 2>/dev/null)
+load_15min=$(echo "$load_json" | jq -r '.load_15min' 2>/dev/null)
+cpu_cores=$(echo "$load_json" | jq -r '.cpu_cores' 2>/dev/null)
+norm_15=$(echo "$load_json" | jq -r '.normalized_15min_percent' 2>/dev/null)
+if [ "$load_1min" != "N/A" ] && [ -n "$load_1min" ]; then
+    load_display="$load_1min / $load_5min / $load_15min"
+    if [ "$cpu_cores" != "N/A" ] && [ -n "$cpu_cores" ]; then
+        load_display="$load_display  ($cpu_cores cores"
+        if [ "$norm_15" != "N/A" ] && [ -n "$norm_15" ]; then
+            load_display="$load_display, ~${norm_15}% utilized"
+        fi
+        load_display="$load_display)"
+    fi
+    printf "%-${output_tab_space}s: %s\n" "System Load (1/5/15m)" "$load_display"
 fi
 
 # File Descriptors
 fd_json=$(get_file_descriptor_usage)
+fd_alloc=$(echo "$fd_json" | jq -r '.allocated' 2>/dev/null)
+fd_max=$(echo "$fd_json" | jq -r '.maximum' 2>/dev/null)
 fd_usage=$(echo "$fd_json" | jq -r '.usage_percent' 2>/dev/null)
-if [ "$fd_usage" != "N/A" ]; then
-    printf "%-${output_tab_space}s: %s\n" "FD Usage" "$fd_usage%"
+if [ "$fd_alloc" != "0" ] && [ -n "$fd_alloc" ]; then
+    if [ "$fd_usage" != "N/A" ] && [ -n "$fd_usage" ]; then
+        printf "%-${output_tab_space}s: %s\n" "File Descriptors" "$fd_alloc / $fd_max ($fd_usage%)"
+    else
+        printf "%-${output_tab_space}s: %s\n" "File Descriptors" "$fd_alloc allocated (max $fd_max)"
+    fi
 fi
 
 # Spacer.

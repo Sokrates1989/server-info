@@ -52,7 +52,7 @@ cpu_temp=$(get_cpu_temperature)
 if [ "$cpu_temp" != "N/A" ]; then
     echo -e "CPU Temperature: $cpu_temp°C"
 else
-    echo -e "CPU Temperature: N/A (sensors not available)"
+    echo -e "CPU Temperature: N/A (install: sudo apt install lm-sensors && sudo sensors-detect)"
 fi
 
 # Fan Speed
@@ -60,7 +60,7 @@ fan_speed=$(get_fan_speed)
 if [ "$fan_speed" != "N/A" ]; then
     echo -e "Fan Speed: $fan_speed RPM"
 else
-    echo -e "Fan Speed: N/A (sensors not available)"
+    echo -e "Fan Speed: N/A (install: sudo apt install lm-sensors)"
 fi
 
 # GPU Temperature
@@ -68,7 +68,7 @@ gpu_temp=$(get_gpu_temperature)
 if [ "$gpu_temp" != "N/A" ]; then
     echo -e "GPU Temperature: $gpu_temp°C"
 else
-    echo -e "GPU Temperature: N/A (no GPU or nvidia-smi/rocm-smi not available)"
+    echo -e "GPU Temperature: N/A (no GPU or install: nvidia-smi / rocm-smi)"
 fi
 
 # Disk SMART Health
@@ -105,16 +105,26 @@ io_wait=$(get_io_wait)
 if [ "$io_wait" != "N/A" ]; then
     echo -e "I/O Wait: $io_wait%"
 else
-    echo -e "I/O Wait: N/A (vmstat not available)"
+    echo -e "I/O Wait: N/A (install: sudo apt install procps)"
 fi
 
-# System Load
+# System Load (raw + normalized percentage)
 load_json=$(get_system_load)
 load_1min=$(echo "$load_json" | jq -r '.load_1min' 2>/dev/null)
 load_5min=$(echo "$load_json" | jq -r '.load_5min' 2>/dev/null)
 load_15min=$(echo "$load_json" | jq -r '.load_15min' 2>/dev/null)
+cpu_cores=$(echo "$load_json" | jq -r '.cpu_cores' 2>/dev/null)
+norm_1=$(echo "$load_json" | jq -r '.normalized_1min_percent' 2>/dev/null)
+norm_5=$(echo "$load_json" | jq -r '.normalized_5min_percent' 2>/dev/null)
+norm_15=$(echo "$load_json" | jq -r '.normalized_15min_percent' 2>/dev/null)
 if [ "$load_1min" != "N/A" ]; then
     echo -e "System Load Averages: 1min=$load_1min, 5min=$load_5min, 15min=$load_15min"
+    if [ "$cpu_cores" != "N/A" ] && [ -n "$cpu_cores" ]; then
+        echo -e "CPU Cores: $cpu_cores"
+        if [ "$norm_1" != "N/A" ] && [ -n "$norm_1" ]; then
+            echo -e "Normalized Load:      1min=~${norm_1}%, 5min=~${norm_5}%, 15min=~${norm_15}%"
+        fi
+    fi
 fi
 
 # File Descriptors
@@ -122,8 +132,12 @@ fd_json=$(get_file_descriptor_usage)
 fd_allocated=$(echo "$fd_json" | jq -r '.allocated' 2>/dev/null)
 fd_maximum=$(echo "$fd_json" | jq -r '.maximum' 2>/dev/null)
 fd_usage=$(echo "$fd_json" | jq -r '.usage_percent' 2>/dev/null)
-if [ "$fd_usage" != "N/A" ]; then
-    echo -e "File Descriptors: $fd_allocated allocated of $fd_maximum ($fd_usage%)"
+if [ "$fd_allocated" != "0" ] && [ -n "$fd_allocated" ]; then
+    if [ "$fd_usage" != "N/A" ] && [ -n "$fd_usage" ]; then
+        echo -e "File Descriptors: $fd_allocated allocated of $fd_maximum ($fd_usage%)"
+    else
+        echo -e "File Descriptors: $fd_allocated allocated (max $fd_maximum)"
+    fi
 fi
 
 # Network Errors
