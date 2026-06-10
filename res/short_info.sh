@@ -273,7 +273,9 @@ else
                 pull_result=$?
                 echo ""
                 if [ $pull_result -eq 0 ]; then
-                    echo "✅ Updates applied successfully."
+                    echo -e "✅ Updates applied successfully. Re-running server-info...\n"
+                    cd "$current_dir"
+                    exec server-info
                 else
                     echo "❌ Pull failed. Try manually:"
                     echo "   cd $MAIN_DIR"
