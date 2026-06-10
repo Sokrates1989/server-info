@@ -259,12 +259,33 @@ else
 
         if [ "$available_updates" = true ]; then
             echo -e "Remote Repo updateable! $behind_count commits behind. Pull is recommended."
-
-            # Print user info how to update repo.
-            echo -e "\nTo Update repo do this:"
-            echo -e "cd $MAIN_DIR"
-            echo -e "git pull"
-            echo -e "cd $current_dir\n"
+            echo ""
+            
+            # Interactive prompt to pull updates
+            echo -n "Do you want to pull updates now? (Y/n): "
+            read -r response
+            echo ""
+            
+            # Default to Yes if user just presses Enter or answers Y/y
+            if [[ -z "$response" || "$response" =~ ^[Yy]$ ]]; then
+                echo "🔄 Pulling updates..."
+                git pull
+                pull_result=$?
+                echo ""
+                if [ $pull_result -eq 0 ]; then
+                    echo "✅ Updates applied successfully."
+                else
+                    echo "❌ Pull failed. Try manually:"
+                    echo "   cd $MAIN_DIR"
+                    echo "   git pull"
+                    echo "   cd $current_dir"
+                fi
+            else
+                echo "Skipped. To update manually:"
+                echo "   cd $MAIN_DIR"
+                echo "   git pull"
+                echo "   cd $current_dir"
+            fi
             
         fi
     fi         
