@@ -938,8 +938,8 @@ get_raid_status() {
                 [ -z "$array" ] && continue
                 
                 local detail=$(mdadm --detail "$array" 2>/dev/null)
-                local state=$(echo "$detail" | awk -F': ' '/State :/ {print $2; exit}' 2>/dev/null)
-                local raid_level=$(echo "$detail" | awk -F': ' '/Raid Level :/ {print $2; exit}' 2>/dev/null)
+                local state=$(echo "$detail" | awk -F': ' '/State :/ {print $2; exit}' 2>/dev/null | xargs)
+                local raid_level=$(echo "$detail" | awk -F': ' '/Raid Level :/ {print $2; exit}' 2>/dev/null | xargs)
                 
                 if [ "$first" = true ]; then
                     first=false
